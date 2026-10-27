@@ -138,9 +138,15 @@ export async function GET(
         const validQuotes = dailyData.quotes.filter((q: any) => q.close !== null && q.close !== undefined && q.close > 0);
         const closes = validQuotes.map((q: any) => q.close);
 
-        // MA20 & MA50
+        // MA5, MA10, MA20, MA50
+        const ma5 = closes.length >= 5 ? closes.slice(-5).reduce((a: number, b: number) => a + b, 0) / 5 : null;
+        const ma10 = closes.length >= 10 ? closes.slice(-10).reduce((a: number, b: number) => a + b, 0) / 10 : null;
         const ma20 = closes.length >= 20 ? closes.slice(-20).reduce((a: number, b: number) => a + b, 0) / 20 : null;
         const ma50 = closes.length >= 50 ? closes.slice(-50).reduce((a: number, b: number) => a + b, 0) / 50 : null;
+
+        // Status Alignment MA
+        const isBullishAlignment = ma5 && ma10 && ma20 && currentPrice >= ma5 && ma5 >= ma10 && ma10 >= ma20;
+        const isGoldenCross = ma5 && ma10 && ma5 >= ma10 && (closes.length >= 6 ? closes.slice(-6, -1).reduce((a: number, b: number) => a + b, 0) / 5 < (closes.length >= 11 ? closes.slice(-11, -1).reduce((a: number, b: number) => a + b, 0) / 10 : 0) : false);
 
         // RSI 14
         let gains = 0;
@@ -172,6 +178,18 @@ export async function GET(
         const resistance = Math.max(...last20Highs);
         const support = Math.min(...last20Lows);
 
+        // Harga Ideal Beli & Stop Loss (sinkron dengan Watchlist Harian):
+        let idealBuyPrice: number;
+        if (ma20 && currentPrice > ma20) {
+          idealBuyPrice = Math.round(Math.max(support, ma20 * 0.99));
+        } else {
+          idealBuyPrice = Math.round(support + (currentPrice - support) * 0.25);
+        }
+
+        const slCandidate = Math.min(Math.round(idealBuyPrice * 0.96), Math.round(support * 0.98));
+        const stopLoss = slCandidate < idealBuyPrice ? slCandidate : Math.round(idealBuyPrice * 0.95);
+        const riskPercent = Math.round(Math.abs((idealBuyPrice - stopLoss) / idealBuyPrice) * 1000) / 10;
+
         // Status Tren & Signal
         let trend: 'uptrend' | 'downtrend' | 'sideways' = 'sideways';
         if (ma20 && currentPrice > ma20) {
@@ -180,39 +198,79 @@ export async function GET(
           trend = 'downtrend';
         }
 
-        let signal = 'Wait';
-        let signalBadge = 'bg-slate-100 text-slate-700';
+        // Evaluasi SEMUA sinyal aktif (Multi-tagging)
+        const activeTags: { label: string; badge: string; tooltip: string }[] = [];
+
         if (rsi <= 35) {
-          signal = '🟢 Oversold (Pantulan Rebound)';
-          signalBadge = 'bg-emerald-50 text-emerald-800 border-emerald-200';
-        } else if (volSpike >= 1.5 && currentPrice > (ma20 || currentPrice)) {
-          signal = '🚀 Volume Breakout';
-          signalBadge = 'bg-indigo-50 text-indigo-800 border-indigo-200';
-        } else if (currentPrice >= (ma20 || 0) && (ma50 ? currentPrice >= ma50 : true)) {
-          signal = '📈 Momentum Uptrend';
-          signalBadge = 'bg-blue-50 text-blue-800 border-blue-200';
+          activeTags.push({
+            label: '🟢 Oversold (Jenuh Jual)',
+            badge: 'bg-emerald-50 text-emerald-800 border-emerald-300',
+            tooltip: `RSI ${Math.round(rsi * 10) / 10} di zona jenuh jual. Potensi pantulan rebound teknikal.`,
+          });
         } else if (rsi >= 70) {
-          signal = '⚠️ Overbought (Rawan Koreksi)';
-          signalBadge = 'bg-rose-50 text-rose-800 border-rose-200';
+          activeTags.push({
+            label: '⚠️ Overbought (Jenuh Beli)',
+            badge: 'bg-rose-50 text-rose-800 border-rose-300',
+            tooltip: `RSI ${Math.round(rsi * 10) / 10} terlalu panas. Rawan aksi ambil untung (profit taking).`,
+          });
         }
+
+        if (volSpike >= 1.5) {
+          activeTags.push({
+            label: '🚀 Volume Breakout',
+            badge: 'bg-indigo-50 text-indigo-800 border-indigo-300 font-bold',
+            tooltip: `Volume spike ${Math.round(volSpike * 10) / 10}x rata-rata 20 hari. Terjadi akumulasi transaksi besar.`,
+          });
+        }
+
+        if (isBullishAlignment) {
+          activeTags.push({
+            label: '🔥 Bullish MA (5 > 10 > 20)',
+            badge: 'bg-amber-100 text-amber-900 border-amber-300 font-extrabold',
+            tooltip: 'Harga di atas MA5 > MA10 > MA20. Formasi tren naik sempurna.',
+          });
+        } else if (isGoldenCross) {
+          activeTags.push({
+            label: '⚡ Golden Cross (MA5 > MA10)',
+            badge: 'bg-indigo-100 text-indigo-900 border-indigo-300 font-bold',
+            tooltip: 'MA5 memotong ke atas MA10. Awal akselerasi momentum tren baru.',
+          });
+        } else if (trend === 'uptrend' && rsi >= 45 && rsi <= 68) {
+          activeTags.push({
+            label: '📈 Momentum Uptrend',
+            badge: 'bg-blue-50 text-blue-800 border-blue-300',
+            tooltip: 'Harga bertahan kokoh di atas garis MA20.',
+          });
+        }
+
+        let signal = activeTags.length > 0 ? activeTags[0].label : 'Neutral';
+        let signalBadge = activeTags.length > 0 ? activeTags[0].badge : 'bg-slate-100 text-slate-700';
 
         technicals = {
           rsi: Math.round(rsi * 10) / 10,
+          ma5: ma5 ? Math.round(ma5) : null,
+          ma10: ma10 ? Math.round(ma10) : null,
           ma20: ma20 ? Math.round(ma20) : null,
           ma50: ma50 ? Math.round(ma50) : null,
+          isBullishAlignment: !!isBullishAlignment,
+          isGoldenCross: !!isGoldenCross,
           volSpike: Math.round(volSpike * 10) / 10,
           resistance: Math.round(resistance),
           support: Math.round(support),
+          idealBuyPrice,
+          stopLoss,
+          riskPercent,
           trend,
           signal,
           signalBadge,
+          activeTags,
         };
       }
     } catch (e) {
       console.warn(`Technical data query error for ${ticker}`);
     }
 
-    // Ambil data kesehatan finansial & profitabilitas (Fitur Anti Value Trap)
+    // Ambil data kesehatan finansial, profitabilitas, serta profil sektor perusahaan
     let financialHealth = {
       roe: null as number | null,
       der: null as number | null,
@@ -222,30 +280,48 @@ export async function GET(
       isBank: false,
     };
 
+    let companyProfile = {
+      sector: null as string | null,
+      industry: null as string | null,
+      website: null as string | null,
+    };
+
     try {
       const summary = await yahooFinance.quoteSummary(ticker, {
-        modules: ['financialData', 'defaultKeyStatistics'],
+        modules: ['financialData', 'defaultKeyStatistics', 'assetProfile'],
       }).catch(() => null);
 
-      if (summary && summary.financialData) {
-        const fd = summary.financialData;
-        const roe = fd.returnOnEquity !== undefined && fd.returnOnEquity !== null ? Math.round(fd.returnOnEquity * 1000) / 10 : null; // in %
-        const der = fd.debtToEquity !== undefined && fd.debtToEquity !== null ? Math.round((fd.debtToEquity / 100) * 100) / 100 : null; // Yahoo delivers debtToEquity in percent (e.g. 41.12 = 0.41x)
-        const profitMargin = fd.profitMargins !== undefined && fd.profitMargins !== null ? Math.round(fd.profitMargins * 1000) / 10 : null; // in %
-        const revenueGrowth = fd.revenueGrowth !== undefined && fd.revenueGrowth !== null ? Math.round(fd.revenueGrowth * 1000) / 10 : null; // in %
-        const earningsGrowth = fd.earningsGrowth !== undefined && fd.earningsGrowth !== null ? Math.round(fd.earningsGrowth * 1000) / 10 : null; // in %
+      if (summary) {
+        if (summary.assetProfile) {
+          companyProfile = {
+            sector: summary.assetProfile.sectorDisp || summary.assetProfile.sector || null,
+            industry: summary.assetProfile.industryDisp || summary.assetProfile.industry || null,
+            website: summary.assetProfile.website || null,
+          };
+        }
 
-        // Sektor perbankan biasanya tidak memiliki DER standar karena simpanan nasabah dihitung liabilitas
-        const isBank = (quote.sector && quote.sector.toLowerCase().includes('financial')) || (quote.industry && quote.industry.toLowerCase().includes('bank')) || false;
+        if (summary.financialData) {
+          const fd = summary.financialData;
+          const roe = fd.returnOnEquity !== undefined && fd.returnOnEquity !== null ? Math.round(fd.returnOnEquity * 1000) / 10 : null; // in %
+          const der = fd.debtToEquity !== undefined && fd.debtToEquity !== null ? Math.round((fd.debtToEquity / 100) * 100) / 100 : null; // Yahoo delivers debtToEquity in percent (e.g. 41.12 = 0.41x)
+          const profitMargin = fd.profitMargins !== undefined && fd.profitMargins !== null ? Math.round(fd.profitMargins * 1000) / 10 : null; // in %
+          const revenueGrowth = fd.revenueGrowth !== undefined && fd.revenueGrowth !== null ? Math.round(fd.revenueGrowth * 1000) / 10 : null; // in %
+          const earningsGrowth = fd.earningsGrowth !== undefined && fd.earningsGrowth !== null ? Math.round(fd.earningsGrowth * 1000) / 10 : null; // in %
 
-        financialHealth = {
-          roe,
-          der,
-          profitMargin,
-          revenueGrowth,
-          earningsGrowth,
-          isBank,
-        };
+          // Sektor perbankan biasanya tidak memiliki DER standar karena simpanan nasabah dihitung liabilitas
+          const sectorStr = (companyProfile.sector || quote.sector || '').toLowerCase();
+          const industryStr = (companyProfile.industry || quote.industry || '').toLowerCase();
+          const isBank = sectorStr.includes('financial') || industryStr.includes('bank');
+
+          financialHealth = {
+            roe,
+            der,
+            profitMargin,
+            revenueGrowth,
+            earningsGrowth,
+            isBank,
+          };
+        }
       }
     } catch (e) {
       console.warn(`Financial health query error for ${ticker}`);
@@ -289,11 +365,16 @@ export async function GET(
     const dividendRate = quote.trailingAnnualDividendRate || (dividendHistory.length > 0 ? dividendHistory[0].amount : null);
 
     const cleanTicker = ticker.replace('.JK', '');
+    const logoUrl = `https://assets.stockbit.com/logos/companies/${cleanTicker}.png`;
 
     return NextResponse.json({
       ticker: cleanTicker,
       fullTicker: ticker,
       name: quote.longName || quote.shortName || cleanTicker,
+      sector: companyProfile.sector,
+      industry: companyProfile.industry,
+      website: companyProfile.website,
+      logoUrl,
       price: currentPrice,
       changePercent: quote.regularMarketChangePercent || 0,
       currency: quote.currency || 'IDR',

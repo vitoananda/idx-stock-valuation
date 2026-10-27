@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Technical Specification Document (TSD) - IDX Valuation</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 18mm 20mm 18mm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.6;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 20pt;
+      color: #0f172a;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 6px;
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
+    h2 {
+      font-size: 14pt;
+      color: #1e293b;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 4px;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+    h3 {
+      font-size: 12pt;
+      color: #334155;
+      margin-top: 16px;
+      margin-bottom: 6px;
+    }
+    h4 {
+      font-size: 11pt;
+      color: #475569;
+      margin-top: 12px;
+      margin-bottom: 4px;
+    }
+    p, li {
+      color: #334155;
+    }
+    ul, ol {
+      margin-top: 4px;
+      margin-bottom: 10px;
+      padding-left: 22px;
+    }
+    li {
+      margin-bottom: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 9.5pt;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 10px;
+      text-align: left;
+    }
+    th {
+      background-color: #f1f5f9;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    pre {
+      background-color: #0f172a;
+      color: #f8fafc;
+      padding: 12px 14px;
+      border-radius: 6px;
+      font-family: Consolas, Monaco, "Courier New", monospace;
+      font-size: 9pt;
+      line-height: 1.45;
+      overflow-x: auto;
+      margin: 10px 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    code {
+      font-family: Consolas, Monaco, "Courier New", monospace;
+      font-size: 9.5pt;
+      background-color: #f1f5f9;
+      color: #0f172a;
+      padding: 2px 5px;
+      border-radius: 4px;
+      border: 1px solid #e2e8f0;
+    }
+    pre code {
+      background-color: transparent;
+      color: inherit;
+      padding: 0;
+      border: none;
+    }
+    blockquote {
+      border-left: 4px solid #6366f1;
+      margin: 12px 0;
+      padding: 8px 14px;
+      background-color: #f5f3ff;
+      color: #4338ca;
+    }
+    hr {
+      border: 0;
+      border-top: 1px solid #e2e8f0;
+      margin: 18px 0;
+    }
+    .header-tag {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 16px;
+    }
+    .mermaid {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      margin: 16px 0;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+</head>
+<body>
+  <h1>Technical Specification Document (TSD)</h1>
+<h2>IDX Valuation &amp; Execution Dashboard (idx-valuation-web)</h2>
+<p><strong>Versi:</strong> 1.0.0<br><strong>Tanggal:</strong> 22 Oktober 2026<br><strong>Status:</strong> Approved / Production-Ready<br><strong>Tech Stack:</strong> Next.js 16 (App Router &amp; Turbopack), React 19, TypeScript 5, Tailwind CSS v4, Yahoo Finance 2, MongoDB Driver</p>
+<hr>
+<h3>1. Arsitektur Sistem &amp; Aliran Data</h3>
+<pre><code class="language-mermaid">flowchart TD
+    Client[&quot;Next.js Client Components (React 19)&quot;]
+    API[&quot;Next.js Server Route Handlers / API&quot;]
+    YF[(&quot;Yahoo Finance API Engine&quot;)]
+    DB[(&quot;MongoDB Cluster / Memory Fallback&quot;)]
+
+    Client --&gt;|&quot;HTTP GET /api/stock/:ticker&quot;| API
+    Client --&gt;|&quot;HTTP GET /api/screener?mode=&amp;minMarketCap=&quot;| API
+    Client --&gt;|&quot;HTTP GET /api/daily-watchlist?mode=&quot;| API
+    Client --&gt;|&quot;HTTP GET/POST/DELETE /api/watchlist&quot;| API
+
+    API --&gt;|&quot;Realtime Quote &amp; 5-Year Chart&quot;| YF
+    API --&gt;|&quot;120-Day Daily Chart (RSI &amp; MA)&quot;| YF
+    API --&gt;|&quot;Quote Summary (Health &amp; Financials)&quot;| YF
+    API --&gt;|&quot;USDIDR Currency Rate&quot;| YF
+
+    API &lt;--&gt;|&quot;Persistence Operations&quot;| DB
+</code></pre>
+<hr>
+<h3>2. Struktur Repositori &amp; File Proyek</h3>
+<pre><code>idx-valuation-web/
+├── docs/
+│   ├── FSD.md                     # Functional Specification Document
+│   └── TSD.md                     # Technical Specification Document
+├── src/
+│   ├── app/
+│   │   ├── api/
+│   │   │   ├── daily-watchlist/
+│   │   │   │   └── route.ts       # Endpoint kurasi saham harian (Invest &amp; Swing)
+│   │   │   ├── screener/
+│   │   │   │   └── route.ts       # Endpoint ranking MoS &amp; Momentum Swing
+│   │   │   ├── stock/[ticker]/
+│   │   │   │   └── route.ts       # Detail analitik valuasi, deviasi, teknikal
+│   │   │   └── watchlist/
+│   │   │       └── route.ts       # CRUD watchlist pengguna (MongoDB / Memory)
+│   │   ├── favicon.ico
+│   │   ├── globals.css            # Tailwind CSS v4 setup
+│   │   ├── layout.tsx             # Root layout &amp; font definition
+│   │   └── page.tsx               # Single-Page Interactive Dashboard UI
+│   └── lib/
+│       └── mongodb.ts             # MongoDB client singleton connection
+├── public/                        # Aset statis &amp; SVG
+├── next.config.ts                 # Next.js 16 configuration
+├── package.json                   # Dependencies &amp; scripts
+├── tsconfig.json                  # TypeScript strict configuration
+└── .env.local                     # Environment variables (MONGODB_URI)
+</code></pre>
+<hr>
+<h3>3. Spesifikasi Kontrak API (Endpoints)</h3>
+<h4>3.1. <code>GET /api/stock/[ticker]</code></h4>
+<p>Mengambil data detail, valuasi historis 5 tahun, kalkulasi deviasi standar, rasio anti-value trap, riwayat dividen, dan radar teknikal 120 hari untuk ticker tertentu.</p>
+<ul>
+<li><strong>Path Parameter:</strong><ul>
+<li><code>ticker</code> (string, required): Kode saham IDX (misal <code>BBRI</code> atau <code>BBRI.JK</code>).</li>
+</ul>
+</li>
+<li><strong>Response Payload (JSON):</strong></li>
+</ul>
+<pre><code class="language-typescript">interface StockResponse {
+  ticker: string;              // &quot;BBRI&quot;
+  fullTicker: string;          // &quot;BBRI.JK&quot;
+  name: string;                // &quot;Bank Rakyat Indonesia (Persero) Tbk&quot;
+  price: number;               // 4850
+  changePercent: number;       // 1.46
+  marketCap: number;           // 735000000000000
+  marketCapFormatted: string;  // &quot;Rp 735.0 T&quot;
+  eps: number | null;
+  bvps: number | null;
+  per: {
+    current: number | null;
+    minus1SD: number;
+    mean: number;
+    plus1SD: number;
+    fairPrice: number | null;
+  };
+  pbv: {
+    current: number | null;
+    minus1SD: number;
+    mean: number;
+    plus1SD: number;
+    fairPrice: number | null;
+  };
+  dividend: {
+    yieldPercent: number | null;
+    annualRate: number | null;
+    history: Array&lt;{
+      date: string;
+      amount: number;
+      cumDate: string | null;
+      cumPrice: number | null;
+      yieldOnCum: number | null;
+    }&gt;;
+  };
+  health: {
+    roe: number | null;
+    der: number | null;
+    profitMargin: number | null;
+    revenueGrowth: number | null;
+    earningsGrowth: number | null;
+    isBank: boolean;
+  };
+  technicals: {
+    rsi: number;               // 14-period RSI
+    ma20: number | null;       // 20-day Simple Moving Average
+    ma50: number | null;       // 50-day Simple Moving Average
+    volSpike: number;          // Today volume vs 20D average volume ratio
+    resistance: number;        // 20-day high
+    support: number;           // 20-day low
+    trend: &#39;uptrend&#39; | &#39;downtrend&#39; | &#39;sideways&#39;;
+    signal: string;            // e.g. &quot;🟢 Oversold (Pantulan Rebound)&quot;
+    signalBadge: string;
+  };
+}
+</code></pre>
+<hr>
+<h4>3.2. <code>GET /api/screener</code></h4>
+<p>Menghasilkan daftar ranking emiten yang disaring berdasarkan minimal kapitalisasi pasar dan mode operasional (<em>Invest</em> vs <em>Swing</em>).</p>
+<ul>
+<li><strong>Query Parameters:</strong><ul>
+<li><code>mode</code> (string, optional): <code>&#39;invest&#39;</code> (default) | <code>&#39;swing&#39;</code>.</li>
+<li><code>minMarketCap</code> (number, optional): Nilai batas minimum kapitalisasi pasar dalam Rupiah (default <code>1_000_000_000_000</code>).</li>
+</ul>
+</li>
+<li><strong>Logika Penyortiran:</strong><ul>
+<li><code>mode === &#39;invest&#39;</code>: Diurutkan secara menurun (<em>descending</em>) berdasarkan <code>marginOfSafety</code>.</li>
+<li><code>mode === &#39;swing&#39;</code>: Diurutkan secara menurun (<em>descending</em>) berdasarkan skor gabungan:
+$$\text{Swing Score} = (\text{Upside Potential} \times 1.5) + \text{RSI Oversold Bonus} + \text{Volume Spike Bonus} + (\text{Change %} \times 3)$$</li>
+</ul>
+</li>
+<li><strong>Response Payload (JSON):</strong></li>
+</ul>
+<pre><code class="language-typescript">interface ScreenerResponse {
+  timestamp: string;
+  minMarketCap: string;
+  minMarketCapRaw: number;
+  count: number;
+  stocks: Array&lt;{
+    ticker: string;
+    name: string;
+    price: number;
+    changePercent: number;
+    marketCap: number;
+    marketCapFormatted: string;
+    per: number | null;
+    pbv: number | null;
+    dividendYield: number | null;
+    marginOfSafety: number;
+    status: &#39;undervalued&#39; | &#39;fair&#39; | &#39;expensive&#39;;
+    rsi: number | null;
+    volSpike: number | null;
+    trend: &#39;uptrend&#39; | &#39;downtrend&#39; | &#39;sideways&#39;;
+    swingPotential: number;     // Jarak ke resistance terdekat (%)
+    swingSignal: string;
+    swingSignalBadge: string;
+  }&gt;;
+}
+</code></pre>
+<hr>
+<h4>3.3. <code>GET /api/daily-watchlist</code></h4>
+<p>Menghasilkan pilihan saham terbaik hari ini yang dikelompokkan ke dalam kategori strategis berdasarkan mode aktif.</p>
+<ul>
+<li><strong>Query Parameter:</strong><ul>
+<li><code>mode</code> (string, optional): <code>&#39;invest&#39;</code> | <code>&#39;swing&#39;</code>.</li>
+</ul>
+</li>
+<li><strong>Kategori Dinamis:</strong><ul>
+<li><strong>Invest:</strong> <code>super-undervalued</code>, <code>high-dividend</code>, <code>rebound-momentum</code>, <code>oversold-bluechip</code>.</li>
+<li><strong>Swing:</strong> <code>volume-breakout</code>, <code>swing-rebound</code>, <code>momentum-runner</code>, <code>rebound-momentum</code>.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h4>3.4. <code>GET</code>, <code>POST</code>, <code>DELETE /api/watchlist</code></h4>
+<p>Operasi CRUD daftar pantauan pengguna dengan persistensi MongoDB dan <em>fail-safe memory buffer</em>.</p>
+<ul>
+<li><strong>GET:</strong> Mengembalikan array objek <code>{ ticker, name, addedAt, notes }</code> dan indikator <code>storage</code> (<code>&#39;mongodb&#39;</code> atau <code>&#39;memory&#39;</code>).</li>
+<li><strong>POST:</strong> Menyimpan saham baru ke koleksi <code>watchlist</code> menggunakan operasi <em>upsert</em>.</li>
+<li><strong>DELETE:</strong> Menghapus dokumen berdasarkan parameter query <code>?ticker=CODE</code>.</li>
+</ul>
+<hr>
+<h3>4. Algoritma Kunci &amp; Komputasi Finansial</h3>
+<h4>4.1. Normalisasi Mata Uang Emiten Asing (USD Reporting)</h4>
+<p>Sebagian emiten di BEI (seperti ADRO, PTRO, MEDC, ITMG) melaporkan ekuitas dan laba dalam mata uang USD, sementara harga saham di bursa diperdagangkan dalam IDR. Sistem secara otomatis melakukan kurs silang (<em>cross-rate</em>) memanfaatkan ticker <code>USDIDR=X</code>:</p>
+<pre><code class="language-typescript">if (quote.financialCurrency === &#39;USD&#39;) {
+  if (bookValue &amp;&amp; bookValue &lt; 50) {
+    const bvpsIdr = bookValue * usdIdrRate;
+    priceToBook = currentPrice / bvpsIdr;
+    bookValue = bvpsIdr;
+  }
+}
+</code></pre>
+<h4>4.2. Perhitungan 14-Period Relative Strength Index (RSI)</h4>
+<p>Dihitung dari deret data harga penutupan (<em>Close</em>) harian selama 14 periode:</p>
+<pre><code class="language-typescript">let gains = 0;
+let losses = 0;
+for (let i = quotes.length - 14; i &lt; quotes.length; i++) {
+  const prev = Number(quotes[i - 1]?.close || 0);
+  const curr = Number(quotes[i]?.close || 0);
+  const diff = curr - prev;
+  if (diff &gt;= 0) gains += diff;
+  else losses += Math.abs(diff);
+}
+const avgGain = gains / 14;
+const avgLoss = losses / 14;
+const rsi = avgLoss === 0 ? 100 : 100 - (100 / (1 + (avgGain / avgLoss)));
+</code></pre>
+<h4>4.3. Formula Matematis Average Down (Mode Target Avg)</h4>
+<p>Menentukan jumlah lembar saham tambahan ($L_1$) yang wajib dibeli pada harga pasar saat ini ($P_1$) agar rata-rata portofolio awal ($P_0, L_0$) turun menjadi $P_{\text{target}}$:
+$$P_{\text{target}} = \frac{(P_0 \times L_0) + (P_1 \times L_1)}{L_0 + L_1}$$
+$$\iff P_{\text{target}} \times L_0 + P_{\text{target}} \times L_1 = P_0 \times L_0 + P_1 \times L_1$$
+$$\iff L_1 \times (P_{\text{target}} - P_1) = L_0 \times (P_0 - P_{\text{target}})$$
+$$\iff L_1 = \left\lceil \frac{L_0 \times (P_0 - P_{\text{target}})}{P_{\text{target}} - P_1} \right\rceil$$</p>
+<hr>
+<h3>5. Keamanan, Penanganan Error &amp; Kinerja</h3>
+<ol>
+<li><strong>Suppression Notices Yahoo Finance:</strong>
+Pustaka <code>yahoo-finance2</code> dikonfigurasi dengan <code>suppressNotices: [&#39;yahooSurvey&#39;, &#39;ripHistorical&#39;]</code> guna mencegah <em>overhead</em> <em>logging</em> di konsol server.</li>
+<li><strong>Dynamic Route Rendering:</strong>
+Semua <em>route handler</em> yang membaca query string (<code>request.url</code>) dideklarasikan secara dinamis (<code>force-dynamic</code>) untuk mencegah kegagalan prerendering saat tahap <code>next build</code>.</li>
+<li><strong>Database Resiliency (Graceful Degradation):</strong>
+Jika variabel lingkungan <code>MONGODB_URI</code> belum disediakan pada <code>.env.local</code>, modul <a href="file:///d:/repos/misc/idx-valuation-web/src/lib/mongodb.ts">mongodb.ts</a> tidak akan memutus koneksi server melainkan mengaktifkan penyimpanan cadangan <em>in-memory array</em> sehingga aplikasi tetap dapat digunakan 100% tanpa konfigurasi database yang rumit.</li>
+<li><strong>Client-Side Responsive Design:</strong>
+Seluruh tata letak menggunakan grid Tailwind CSS adaptif (<code>grid-cols-12</code> pada layar lebar desktop, dan susunan <em>single-column vertical stack</em> pada perangkat seluler) dengan konsistensi warna ramah mata (Slate, Indigo, Emerald, Amber, Rose).</li>
+</ol>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+    document.querySelectorAll('pre code.language-mermaid').forEach(function(el) {
+      var pre = el.parentElement;
+      var div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = el.textContent;
+      pre.parentElement.replaceChild(div, pre);
+    });
+    renderMathInElement(document.body, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false}
+      ]
+    });
+  </script>
+</body>
+</html>

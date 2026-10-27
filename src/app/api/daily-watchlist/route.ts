@@ -3,28 +3,20 @@ import YahooFinance from 'yahoo-finance2';
 
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
 
-// Emiten berfundamental liquid & teruji di IDX
-const WATCHLIST_CANDIDATES = [
-  'BBCA.JK',
-  'BBRI.JK',
-  'BMRI.JK',
-  'BBNI.JK',
-  'ASII.JK',
-  'TLKM.JK',
-  'ICBP.JK',
-  'INDF.JK',
-  'UNVR.JK',
-  'KLBF.JK',
-  'ADRO.JK',
-  'PTBA.JK',
-  'ITMG.JK',
-  'PGAS.JK',
-  'JSMR.JK',
-  'ACES.JK',
-  'MYOR.JK',
-  'CPIN.JK',
-  'MAPI.JK',
-  'SMGR.JK',
+import idxTickers from '@/data/idx-tickers.json';
+
+// Saham raksasa / mega cap yang dikecualikan dari Swing/Scalping karena gerakannya lambat & defensif
+const DEFENSIVE_BIG_CAPS = new Set([
+  'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'TLKM.JK', 'ASII.JK',
+  'ICBP.JK', 'UNVR.JK', 'KLBF.JK', 'INDF.JK', 'AMMN.JK', 'BREN.JK', 'TPIA.JK'
+]);
+
+// Emiten Blue Chip fundamental untuk Investasi Jangka Panjang
+const INVEST_CANDIDATES = [
+  'BBCA.JK', 'BBRI.JK', 'BMRI.JK', 'BBNI.JK', 'ASII.JK', 'TLKM.JK',
+  'ICBP.JK', 'INDF.JK', 'UNVR.JK', 'KLBF.JK', 'ADRO.JK', 'PTBA.JK',
+  'ITMG.JK', 'PGAS.JK', 'JSMR.JK', 'ACES.JK', 'MYOR.JK', 'CPIN.JK',
+  'MAPI.JK', 'SMGR.JK', 'BSDE.JK', 'PWON.JK', 'CTRA.JK', 'AKRA.JK',
 ];
 
 export interface DailyPick {
@@ -45,6 +37,20 @@ export interface DailyPick {
   rsi?: number | null;
   volSpike?: number | null;
   swingPotential?: number;
+  resistance?: number;
+  support?: number;
+  idealBuyPrice?: number;
+  stopLoss?: number;
+  riskPercent?: number;
+  ihsgWarning?: string | null;
+}
+
+export interface IhsgData {
+  price: number;
+  changePercent: number;
+  status: 'bullish' | 'sideways' | 'bearish';
+  label: string;
+  advice: string;
 }
 
 function calculateStats(values: number[]) {
@@ -63,18 +69,102 @@ export async function GET(request: Request) {
     const fxQuote = await yahooFinance.quote('USDIDR=X').catch(() => null);
     const usdIdrRate = fxQuote?.regularMarketPrice || 16200;
 
+    // Ambil data pergerakan IHSG (^JKSE) secara realtime
+    let ihsgData: IhsgData = {
+      price: 0,
+      changePercent: 0,
+      status: 'sideways',
+      label: 'Pasar Konsolidasi',
+      advice: 'Selektif pilih saham berakumulasi volume tinggi.',
+    };
+
+    try {
+      const ihsgRes = await fetch('https://query2.finance.yahoo.com/v8/finance/chart/%5EJKSE', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+        cache: 'no-store',
+      });
+      if (ihsgRes.ok) {
+        const ihsgJson = await ihsgRes.json();
+        const meta = ihsgJson?.chart?.result?.[0]?.meta;
+        if (meta?.regularMarketPrice) {
+          const cur = meta.regularMarketPrice;
+          const prev = meta.chartPreviousClose || cur;
+          const pct = Math.round(((cur - prev) / prev) * 1000) / 10;
+          let status: 'bullish' | 'sideways' | 'bearish' = 'sideways';
+          let label = 'Pasar Konsolidasi';
+          let advice = 'Pilih saham dengan volume spike kuat.';
+
+          if (pct <= -0.4) {
+            status = 'bearish';
+            label = 'Pasar Melemah (Tekanan Jual)';
+            advice = 'IHSG merah! Saham yang melesat rawan profit taking / tarik turun. Jangan kejar harga tinggi, prioritaskan kunci profit.';
+          } else if (pct >= 0.3) {
+            status = 'bullish';
+            label = 'Pasar Kuat (Risk-On)';
+            advice = 'IHSG hijau kondusif. Saham breakout berpotensi rally lanjutan.';
+          }
+
+          ihsgData = {
+            price: Math.round(cur),
+            changePercent: pct,
+            status,
+            label,
+            advice,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal memuat quote IHSG:', e);
+    }
+
     const now = new Date();
     const past = new Date();
     past.setFullYear(now.getFullYear() - 5);
     const past90d = new Date();
     past90d.setDate(now.getDate() - 90);
 
-    // Ambil data quote dan chart secara paralel
+    let targetTickers: { ticker: string; quote: any }[] = [];
+
+    if (mode === 'swing') {
+      // 1. Ambil data quote LIVE untuk SELURUH 955 emiten IDX
+      const allSymbols = (idxTickers as string[]).map((t) => `${t}.JK`);
+      const allQuotes = await yahooFinance.quote(allSymbols).catch(() => []);
+
+      // 2. Filter: Hanya saham aktif transaksi (> 50.000 lembar), punya harga, dan EXCLUDE saham raksasa defensif
+      const activeSwings = allQuotes.filter((q: any) => {
+        if (!q.regularMarketPrice || q.regularMarketPrice <= 0) return false;
+        if (DEFENSIVE_BIG_CAPS.has(q.symbol)) return false; // Exclude BBCA, BBRI, BMRI, BBNI, TLKM, ASII, dll
+        if (!q.regularMarketVolume || q.regularMarketVolume < 50000) return false; // Filter saham tidur / mati
+        return true;
+      });
+
+      // 3. Urutkan berdasarkan gabungan kenaikan harga + lonjakan volume untuk mengambil kandidat terpanas
+      const topActive = activeSwings
+        .sort((a: any, b: any) => {
+          const volA = a.regularMarketVolume || 0;
+          const volB = b.regularMarketVolume || 0;
+          const avgA = a.averageDailyVolume10Day || volA;
+          const avgB = b.averageDailyVolume10Day || volB;
+          const spikeA = avgA > 0 ? volA / avgA : 1;
+          const spikeB = avgB > 0 ? volB / avgB : 1;
+          const scoreA = (a.regularMarketChangePercent || 0) * 2.5 + spikeA * 10;
+          const scoreB = (b.regularMarketChangePercent || 0) * 2.5 + spikeB * 10;
+          return scoreB - scoreA;
+        })
+        .slice(0, 45); // Ambil top 45 saham teraktif & terpanas di seluruh bursa IDX hari ini
+
+      targetTickers = topActive.map((q: any) => ({ ticker: q.symbol, quote: q }));
+    } else {
+      // MODE INVESTASI: Fokus pada saham berfundamental solid
+      const investQuotes = await yahooFinance.quote(INVEST_CANDIDATES).catch(() => []);
+      targetTickers = investQuotes.map((q: any) => ({ ticker: q.symbol, quote: q }));
+    }
+
+    // Ambil data chart historis untuk kandidat terpilih secara paralel
     const results = await Promise.all(
-      WATCHLIST_CANDIDATES.map(async (ticker) => {
+      targetTickers.map(async ({ ticker, quote }) => {
         try {
-          const [quote, chartData, chartDaily] = await Promise.all([
-            yahooFinance.quote(ticker),
+          const [chartData, chartDaily] = await Promise.all([
             yahooFinance.chart(ticker, { period1: past, interval: '1mo' }).catch(() => null),
             yahooFinance.chart(ticker, { period1: past90d, interval: '1d' }).catch(() => null),
           ]);
@@ -136,6 +226,11 @@ export async function GET(request: Request) {
           let volSpike: number | null = null;
           let swingPotential = 0;
           let ma20: number | null = null;
+          let resistance: number | undefined = undefined;
+          let support: number | undefined = undefined;
+          let idealBuyPrice: number | undefined = undefined;
+          let stopLoss: number | undefined = undefined;
+          let riskPercent: number | undefined = undefined;
 
           if (dailyQuotes.length >= 20) {
             let gains = 0;
@@ -155,11 +250,28 @@ export async function GET(request: Request) {
             const last20 = dailyQuotes.slice(-20);
             ma20 = last20.reduce((acc: number, q: any) => acc + q.close, 0) / 20;
             const avgVol = last20.reduce((acc: number, q: any) => acc + (q.volume || 0), 0) / 20;
-            const todayVol = dailyQuotes[dailyQuotes.length - 1].volume || 0;
+            const todayVol = dailyQuotes[dailyQuotes.length - 1].volume || (quote.regularMarketVolume || 0);
             volSpike = avgVol > 0 ? Math.round((todayVol / avgVol) * 10) / 10 : 1;
 
-            const resistance = Math.max(...last20.map((q: any) => q.high || q.close));
+            const resistanceRaw = Math.max(...last20.map((q: any) => q.high || q.close));
+            const supportRaw = Math.min(...last20.map((q: any) => q.low || q.close));
+            resistance = Math.round(resistanceRaw > price ? resistanceRaw : price * 1.05);
+            support = Math.round(supportRaw < price ? supportRaw : price * 0.95);
             swingPotential = resistance > price ? Math.round(((resistance - price) / price) * 1000) / 10 : 5.0;
+
+            // Harga Ideal Beli:
+            if (ma20 && price > ma20) {
+              idealBuyPrice = Math.round(Math.max(support, ma20 * 0.99));
+            } else {
+              idealBuyPrice = Math.round(support + (price - support) * 0.25);
+            }
+
+            // Stop Loss & Risk Loss (%):
+            // Batas toleransi cut loss ketat: 1-2 tik di bawah support atau batas -4% s/d -5% dari entry
+            const baselinePrice = idealBuyPrice || price;
+            const slCandidate = Math.min(Math.round(baselinePrice * 0.96), Math.round(support * 0.98));
+            stopLoss = slCandidate < baselinePrice ? slCandidate : Math.round(baselinePrice * 0.95);
+            riskPercent = Math.round(Math.abs((baselinePrice - stopLoss) / baselinePrice) * 1000) / 10;
           }
 
           return {
@@ -177,6 +289,11 @@ export async function GET(request: Request) {
             rsi,
             volSpike,
             swingPotential,
+            resistance,
+            support,
+            idealBuyPrice,
+            stopLoss,
+            riskPercent,
             ma20,
           };
         } catch {
@@ -194,11 +311,10 @@ export async function GET(request: Request) {
       // MODE SWING TRADE: CARI SAHAM CUAN CEPAT
       // ==========================================
 
-      // 1. Kategori: Volume Breakout (Lonjakan Transaksi > 1.5x + Harga Hijau)
+      // 1. Kategori: Volume Breakout (Lonjakan Transaksi > 1.4x + Harga Hijau)
       const volumeBreakouts = validStocks
-        .filter((s) => s.volSpike && s.volSpike >= 1.4 && s.changePercent > 0.5)
-        .sort((a, b) => (b.volSpike || 0) - (a.volSpike || 0))
-        .slice(0, 2);
+        .filter((s) => s.volSpike && s.volSpike >= 1.3 && s.changePercent > 0.5)
+        .sort((a, b) => (b.volSpike || 0) - (a.volSpike || 0));
       volumeBreakouts.forEach((s) => {
         dailyPicks.push({
           ...s,
@@ -209,11 +325,10 @@ export async function GET(request: Request) {
         });
       });
 
-      // 2. Kategori: Oversold Swing Rebound (RSI < 38 - Pantulan Cepat)
+      // 2. Kategori: Oversold Swing Rebound (RSI <= 38 - Pantulan Cepat)
       const oversoldRebound = validStocks
         .filter((s) => s.rsi && s.rsi <= 38 && !dailyPicks.some((p) => p.ticker === s.ticker))
-        .sort((a, b) => (a.rsi || 100) - (b.rsi || 100))
-        .slice(0, 2);
+        .sort((a, b) => (a.rsi || 100) - (b.rsi || 100));
       oversoldRebound.forEach((s) => {
         dailyPicks.push({
           ...s,
@@ -227,8 +342,7 @@ export async function GET(request: Request) {
       // 3. Kategori: Momentum Runner (Above MA20 + Hijau Konsisten)
       const momentumRunners = validStocks
         .filter((s) => s.changePercent >= 1.0 && s.ma20 && s.price > s.ma20 && !dailyPicks.some((p) => p.ticker === s.ticker))
-        .sort((a, b) => b.changePercent - a.changePercent)
-        .slice(0, 2);
+        .sort((a, b) => b.changePercent - a.changePercent);
       momentumRunners.forEach((s) => {
         dailyPicks.push({
           ...s,
@@ -239,22 +353,19 @@ export async function GET(request: Request) {
         });
       });
 
-      // Jika masih kurang dari 4 picks, isi dengan saham potensi swing tertinggi
-      if (dailyPicks.length < 4) {
-        const remaining = validStocks
-          .filter((s) => !dailyPicks.some((p) => p.ticker === s.ticker))
-          .sort((a, b) => (b.swingPotential || 0) - (a.swingPotential || 0))
-          .slice(0, 4 - dailyPicks.length);
-        remaining.forEach((s) => {
-          dailyPicks.push({
-            ...s,
-            category: 'rebound-momentum',
-            categoryLabel: '🎯 Target Swing',
-            highlightReason: `Potensi kenaikan ke resistance 20 hari +${s.swingPotential}%. Cocok untuk swing buy on weakness.`,
-            tagColor: 'bg-teal-100 text-teal-800 border-teal-300',
-          });
+      // Saham potensi swing lainnya jika belum masuk
+      const remaining = validStocks
+        .filter((s) => !dailyPicks.some((p) => p.ticker === s.ticker))
+        .sort((a, b) => (b.swingPotential || 0) - (a.swingPotential || 0));
+      remaining.forEach((s) => {
+        dailyPicks.push({
+          ...s,
+          category: 'rebound-momentum',
+          categoryLabel: '🎯 Target Swing',
+          highlightReason: `Potensi kenaikan ke resistance 20 hari +${s.swingPotential}%. Cocok untuk swing buy on weakness.`,
+          tagColor: 'bg-teal-100 text-teal-800 border-teal-300',
         });
-      }
+      });
     } else {
       // ==========================================
       // MODE INVESTASI: CARI FUNDAMENTAL & VALUASI DISKON
@@ -319,6 +430,25 @@ export async function GET(request: Request) {
       });
     }
 
+    // Tambahkan label peringatan IHSG untuk mode Swing Trade
+    if (mode === 'swing') {
+      dailyPicks.forEach((p) => {
+        if (ihsgData.status === 'bearish') {
+          if (p.changePercent >= 7.0) {
+            p.ihsgWarning = '⚠️ IHSG Sedang Lemah: Saham sudah naik tinggi, sangat rawan terkena profit taking / ditarik turun!';
+          } else if (p.changePercent >= 2.0) {
+            p.ihsgWarning = '⚠️ IHSG Melemah: Kenaikan tertahan sentimen pasar. Prioritaskan kunci cuan dekat resistance.';
+          } else if (p.changePercent > 0) {
+            p.ihsgWarning = '🛡️ Tahan Banting: Bertahan hijau saat IHSG memerah (Relative Strength positif).';
+          }
+        } else if (ihsgData.status === 'bullish') {
+          if (p.changePercent >= 3.0) {
+            p.ihsgWarning = '🔥 IHSG Kuat: Didukung arus modal bursa yang positif untuk rally lanjutan.';
+          }
+        }
+      });
+    }
+
     return NextResponse.json({
       timestamp: new Date().toISOString(),
       dateFormatted: new Date().toLocaleDateString('id-ID', {
@@ -328,6 +458,7 @@ export async function GET(request: Request) {
         day: 'numeric',
       }),
       count: dailyPicks.length,
+      ihsg: ihsgData,
       picks: dailyPicks,
     });
   } catch (error: any) {

@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Functional Specification Document (FSD) - IDX Valuation</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 18mm 20mm 18mm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.6;
+      color: #1e293b;
+      margin: 0;
+      padding: 0;
+    }
+    h1 {
+      font-size: 20pt;
+      color: #0f172a;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 6px;
+      margin-top: 0;
+      margin-bottom: 12px;
+    }
+    h2 {
+      font-size: 14pt;
+      color: #1e293b;
+      border-bottom: 1px solid #cbd5e1;
+      padding-bottom: 4px;
+      margin-top: 20px;
+      margin-bottom: 8px;
+    }
+    h3 {
+      font-size: 12pt;
+      color: #334155;
+      margin-top: 16px;
+      margin-bottom: 6px;
+    }
+    h4 {
+      font-size: 11pt;
+      color: #475569;
+      margin-top: 12px;
+      margin-bottom: 4px;
+    }
+    p, li {
+      color: #334155;
+    }
+    ul, ol {
+      margin-top: 4px;
+      margin-bottom: 10px;
+      padding-left: 22px;
+    }
+    li {
+      margin-bottom: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0;
+      font-size: 9.5pt;
+    }
+    th, td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 10px;
+      text-align: left;
+    }
+    th {
+      background-color: #f1f5f9;
+      color: #0f172a;
+      font-weight: 600;
+    }
+    pre {
+      background-color: #0f172a;
+      color: #f8fafc;
+      padding: 12px 14px;
+      border-radius: 6px;
+      font-family: Consolas, Monaco, "Courier New", monospace;
+      font-size: 9pt;
+      line-height: 1.45;
+      overflow-x: auto;
+      margin: 10px 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    code {
+      font-family: Consolas, Monaco, "Courier New", monospace;
+      font-size: 9.5pt;
+      background-color: #f1f5f9;
+      color: #0f172a;
+      padding: 2px 5px;
+      border-radius: 4px;
+      border: 1px solid #e2e8f0;
+    }
+    pre code {
+      background-color: transparent;
+      color: inherit;
+      padding: 0;
+      border: none;
+    }
+    blockquote {
+      border-left: 4px solid #6366f1;
+      margin: 12px 0;
+      padding: 8px 14px;
+      background-color: #f5f3ff;
+      color: #4338ca;
+    }
+    hr {
+      border: 0;
+      border-top: 1px solid #e2e8f0;
+      margin: 18px 0;
+    }
+    .header-tag {
+      font-size: 9pt;
+      color: #64748b;
+      margin-bottom: 16px;
+    }
+    .mermaid {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      margin: 16px 0;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+</head>
+<body>
+  <h1>Functional Specification Document (FSD)</h1>
+<h2>IDX Valuation &amp; Execution Dashboard (idx-valuation-web)</h2>
+<p><strong>Versi:</strong> 1.0.0<br><strong>Tanggal:</strong> 22 Oktober 2026<br><strong>Status:</strong> Approved / Production-Ready<br><strong>Domain:</strong> Bursa Efek Indonesia (IDX / BEI)</p>
+<hr>
+<h3>1. Pendahuluan &amp; Ringkasan Eksekutif</h3>
+<p>Aplikasi <strong>IDX Valuation &amp; Execution Dashboard</strong> adalah platform analitik cerdas yang dirancang untuk membantu investor dan trader saham di Bursa Efek Indonesia (IDX). Aplikasi ini menjembatani dua kebutuhan utama pelaku pasar saham:</p>
+<ol>
+<li><strong>Long-Term Investing (🌿):</strong> Menilai valuasi saham secara objektif menggunakan Mean Historical Standard Deviation (P/E &amp; P/B 5 tahun), pembagian dividen (Yield on Cum Date &amp; Annual Rate), deteksi Anti-Value Trap (kesehatan finansial), serta strategi eksekusi beli berbasis Dollar-Cost Averaging (DCA) atau Piramida Beli.</li>
+<li><strong>Swing Trading &amp; Momentum (⚡):</strong> Mendeteksi peluang cuan cepat dalam rentang hari hingga minggu berbasis RSI(14), Moving Average (MA20/MA50), lonjakan volume (<em>Volume Spike</em>), titik pantulan <em>Support/Resistance</em>, serta kalkulasi dinamis rasio risiko terhadap keuntungan (<em>Risk-to-Reward Ratio</em>).</li>
+</ol>
+<hr>
+<h3>2. Persona Pengguna</h3>
+<ul>
+<li><strong>Value Investor:</strong> Mencari saham salah harga (<em>undervalued</em>) dengan <em>Margin of Safety</em> (MoS) tinggi dan rasio profitabilitas sehat (ROE &gt; 10%, DER aman).</li>
+<li><strong>Dividend Hunter:</strong> Menghitung proyeksi pendapatan pasif (<em>passive income</em>) dari dividen kas tahunan, melacak riwayat dividen saat <em>Cum Date</em>, dan menghitung modal yang dibutuhkan untuk mencapai target dividen bulanan/tahunan.</li>
+<li><strong>Swing Trader:</strong> Mencari saham dengan likuiditas tinggi yang sedang mengalami <em>Volume Breakout</em>, <em>Oversold Rebound</em>, atau <em>Momentum Rally</em>, serta membutuhkan rencana keluar (<em>Exit Plan</em>) ketat (TP1, TP2, dan SL terukur).</li>
+<li><strong>Retail &quot;Nyangkut&quot; Trader:</strong> Pelaku pasar yang sedang mengalami <em>floating loss</em> dan membutuhkan simulasi rasional untuk <em>Average Down</em> (menghitung jumlah lot dan dana yang dibutuhkan agar harga rata-rata turun ke target tertentu).</li>
+</ul>
+<hr>
+<h3>3. Arsitektur Modul Fungsional</h3>
+<pre><code class="language-mermaid">flowchart TD
+    User([&quot;Pengguna / Investor&quot;]) --&gt; GlobalMode{&quot;Pilihan Mode Global&quot;}
+    GlobalMode --&gt;|&quot;Mode Investasi&quot;| LongTermFlow[&quot;Alur Analisis Nilai &amp; Dividen&quot;]
+    GlobalMode --&gt;|&quot;Mode Swing Trade&quot;| FastTradingFlow[&quot;Alur Momentum &amp; Cuan Cepat&quot;]
+
+    subgraph ModulAnalisis[&quot;Modul Analisis Saham (Kolom Kiri)&quot;]
+        LongTermFlow --&gt; ValuationCard[&quot;Kartu Valuasi P/E &amp; P/B Bands&quot;]
+        LongTermFlow --&gt; HealthCard[&quot;Health Score Anti-Value Trap&quot;]
+        LongTermFlow --&gt; DividendCard[&quot;Historis Dividen &amp; Cum Date&quot;]
+        FastTradingFlow --&gt; TechnicalRadar[&quot;Radar Teknikal: RSI, MA20, Vol Spike, Supp/Res&quot;]
+    end
+
+    subgraph ModulRencana[&quot;Modul Rencana &amp; Eksekusi (Kolom Kanan)&quot;]
+        ValuationCard --&gt; PlanTab[&quot;Rencana Beli &amp; Average Down&quot;]
+        TechnicalRadar --&gt; PlanTab
+        PlanTab --&gt; FreshBuy[&quot;Belum Punya Barang: DCA / Piramida / Lump Sum&quot;]
+        PlanTab --&gt; AvgDown[&quot;Sudah Punya: Target Avg &amp; Simulasi Tambah Lot&quot;]
+        PlanTab --&gt; ExitPlan[&quot;Target Profit TP1/TP2 &amp; Stop Loss&quot;]
+    end
+
+    subgraph ModulSkrining[&quot;Modul Skrining &amp; Ide Pasar&quot;]
+        GlobalMode --&gt; ScreenerTab[&quot;Screener / Rank Saham&quot;]
+        GlobalMode --&gt; DailyTab[&quot;Watchlist Harian / Saham Menarik&quot;]
+        GlobalMode --&gt; CustomWatchlist[&quot;Watchlist Portofolio Pribadi&quot;]
+    end
+</code></pre>
+<hr>
+<h3>4. Spesifikasi Fungsional Terinci</h3>
+<h4>4.1. Global Mode Switcher</h4>
+<ul>
+<li><strong>Deskripsi:</strong> Pengendali mode sentral yang terletak di header aplikasi dan panel samping kanan.</li>
+<li><strong>Perilaku Sistem:</strong><ul>
+<li><strong>Mode Investasi (🌿):</strong> Menyelaraskan seluruh tab dan ranking untuk fokus pada nilai fundamental, Margin of Safety, dividen tunai, dan horizon investasi jangka panjang.</li>
+<li><strong>Mode Swing Trade (⚡):</strong> Menyelaraskan seluruh tab dan ranking untuk memprioritaskan indikator momentum, volume breakout, pantulan oversold, dan target resisten jangka pendek.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h4>4.2. Modul Analisis Valuasi Fundamental (5-Year Historical Bands)</h4>
+<ul>
+<li><strong>P/E &amp; P/B Historical Banding:</strong><ul>
+<li>Mengambil data historis bulanan selama 5 tahun terakhir.</li>
+<li>Menghitung nilai mean historis, standard deviation (-1 SD, Mean, +1 SD).</li>
+<li>Menghitung <strong>Harga Wajar Konservatif</strong>: Rata-rata harga wajar berbasis P/E dan P/B:
+$$\text{Fair Price} = \frac{(\text{EPS} \times \text{PER Mean}) + (\text{BVPS} \times \text{PBV Mean})}{2}$$</li>
+<li>Menghitung <strong>Margin of Safety (MoS)</strong>:
+$$\text{MoS (%)} = \frac{\text{Fair Price} - \text{Harga Saat Ini}}{\text{Fair Price}} \times 100$$</li>
+<li>Menentukan status harga saham:<ul>
+<li><code>Murah (Undervalued)</code>: MoS $\ge +15%$</li>
+<li><code>Wajar (Fair Price)</code>: $-15% &lt; \text{MoS} &lt; +15%$</li>
+<li><code>Mahal (Overvalued)</code>: MoS $\le -15%$</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h4>4.3. Modul Anti-Value Trap (Financial Health Multi-Factor)</h4>
+<ul>
+<li><strong>Tujuan:</strong> Mencegah investor membeli saham yang tampak murah secara P/E tetapi fundamental perusahaannya sedang memburuk.</li>
+<li><strong>Komponen Evaluasi:</strong><ul>
+<li><strong>Return on Equity (ROE):</strong> Tolok ukur kemampuan mencetak laba bersih dari modal ($\ge 10%$ = Sehat).</li>
+<li><strong>Debt to Equity Ratio (DER):</strong> Tolok ukur beban utang ($\le 1.2\times$ = Sehat; dikecualikan untuk sektor perbankan/finansial).</li>
+<li><strong>Net Profit Margin (NPM):</strong> Efisiensi marjin laba bersih ($\ge 8%$ = Sehat).</li>
+<li><strong>Revenue &amp; Earnings Growth:</strong> Pertumbuhan pendapatan dan laba bersih tahunan.</li>
+</ul>
+</li>
+<li><strong>Scoring &amp; Status:</strong><ul>
+<li><code>🟢 Sangat Sehat (Solid)</code>: Lolos minimal 3 dari 4 kriteria utama.</li>
+<li><code>🟡 Cukup / Waspada</code>: Lolos 2 kriteria; terdapat pelemahan pada salah satu metrik.</li>
+<li><code>🔴 Hati-Hati / Value Trap Risk</code>: Margin laba tergerus atau utang tinggi.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h4>4.4. Modul Radar Teknikal &amp; Momentum Swing Trade</h4>
+<ul>
+<li><strong>Relative Strength Index (RSI 14 Daily):</strong><ul>
+<li>$\text{RSI} \le 35$: Sinyal <code>🟢 Oversold (Pantulan Rebound)</code>.</li>
+<li>$35 &lt; \text{RSI} &lt; 70$: Sinyal Netral / Momentum Lanjutan.</li>
+<li>$\text{RSI} \ge 70$: Sinyal <code>⚠️ Overbought (Rawan Koreksi)</code>.</li>
+</ul>
+</li>
+<li><strong>Moving Averages (MA20 &amp; MA50):</strong><ul>
+<li>Mengukur status tren harga: <em>Uptrend</em> (harga &gt; MA20), <em>Downtrend</em> (harga &lt; MA20), atau <em>Golden Cross Potential</em>.</li>
+</ul>
+</li>
+<li><strong>Volume Spike Detector:</strong><ul>
+<li>Rasio volume perdagangan hari ini terhadap rata-rata volume 20 hari:
+$$\text{Volume Spike} = \frac{\text{Volume Hari Ini}}{\text{Volume Rata-rata 20 Hari}}$$</li>
+<li>Rasio $\ge 1.5\times$ mengindikasikan lonjakan akumulasi institusi/bandar (<code>🚀 Volume Breakout</code>).</li>
+</ul>
+</li>
+<li><strong>Support &amp; Resistance Terdekat:</strong><ul>
+<li>Support: Titik terendah 20 hari (<em>20-Day Low</em>).</li>
+<li>Resistance: Titik tertinggi 20 hari (<em>20-Day High</em>).</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h4>4.5. Modul Perencanaan Beli &amp; Risk Management (Panel Kanan - Tab Rencana)</h4>
+<h5>Skenario A: Belum Punya Barang (Fresh Entry)</h5>
+<ul>
+<li><strong>Kalkulator Pembagian Lot:</strong><ul>
+<li><strong>Piramida Beli (Aggressive on Weakness):</strong> Membagi modal ke 3 tahap (40% di harga saat ini, 30% saat koreksi -4%, 30% saat koreksi -8%).</li>
+<li><strong>DCA (Dollar-Cost Averaging):</strong> Membagi modal rata ke dalam 3 periode tanpa memusingkan volatilitas harian. Default aktif pada saham bervaluasi wajar.</li>
+<li><strong>Lump Sum (All-In):</strong> Membeli seluruh lot di harga pasar hari ini. Sistem menampilkan peringatan jika valuasi tidak sedang diskon.</li>
+</ul>
+</li>
+<li><strong>Rencana Jual &amp; Stop Loss (Exit Plan):</strong><ul>
+<li><strong>Mode Investasi:</strong><ul>
+<li>TP1: Target Harga Wajar Konservatif (Jual 50% muatan).</li>
+<li>TP2: Valuasi +1 SD Euforia Pasar (Jual 50% sisa).</li>
+<li>SL: Batas risiko penurunan fundamental (-8%).</li>
+</ul>
+</li>
+<li><strong>Mode Swing Trade:</strong><ul>
+<li>TP1: Area Resistance 20 Hari (Jual 50% muatan).</li>
+<li>TP2: Momentum Rally Breakout (+10%).</li>
+<li>SL: Batas Cut Loss ketat di bawah garis Support (-4% s/d -5%).</li>
+<li><strong>Risk-to-Reward Ratio:</strong> Menghitung rasio potensi keuntungan dibanding risiko secara otomatis (misal <code>1 : 2.5</code>).</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+<h5>Skenario B: Sudah Punya Barang (Average Down &amp; Rescue Nyangkut)</h5>
+<ul>
+<li><strong>Mode Target Avg:</strong> Pengguna menentukan harga rata-rata yang diinginkan; sistem menghitung lot tambahan dan modal yang dibutuhkan secara eksak:
+$$\text{Lot Tambahan} = \left\lceil \frac{L_0 \times (P_0 - \text{Target})}{\text{Target} - P_{\text{pasar}}} \right\rceil$$</li>
+<li><strong>Mode Simulasi Beli Lot:</strong> Pengguna memasukkan jumlah lot yang ingin dibeli; sistem menghitung harga rata-rata baru yang akan terbentuk beserta persentase penurunannya.</li>
+<li><strong>Rencana Exit Posisi Nyangkut:</strong> Menghitung proyeksi nominal keuntungan/kerugian (dalam Rupiah) dari harga modal rata-rata pengguna saat ini jika menyentuh TP1, TP2, atau SL.</li>
+</ul>
+<hr>
+<h4>4.6. Modul Skrining Saham &amp; Filter Harga (Tab Rank Diskon / Rank Swing)</h4>
+<ul>
+<li><strong>Kategori Tampilan:</strong><ul>
+<li><strong>Mode Investasi:</strong> &quot;Rank Saham Undervalued&quot; (diurutkan berdasarkan MoS tertinggi).</li>
+<li><strong>Mode Swing Trade:</strong> &quot;Rank Saham Potensi Cuan Cepat&quot; (diurutkan berdasarkan skor gabungan Ruang Cuan Resistance + Volume Spike + RSI Oversold).</li>
+</ul>
+</li>
+<li><strong>Filter Minimal Market Cap:</strong><ul>
+<li>Mencegah saham gorengan/lapapis tiga; pilihan cepat: &gt; 0.5T, &gt; 1T, &gt; 5T, &gt; 10T, &gt; 50T.</li>
+</ul>
+</li>
+<li><strong>Filter Rentang Harga Saham (Per Lembar):</strong><ul>
+<li><code>Semua</code>: Menampilkan seluruh spektrum harga saham.</li>
+<li><code>1 - 100</code>: Khusus saham lapis bawah/gocap (Rp 1 s/d Rp 100).</li>
+<li><code>100 - 1k</code>: Khusus saham lapis menengah (Rp 101 s/d Rp 1.000).</li>
+<li><code>&gt; 1k</code>: Khusus saham berharga di atas Rp 1.000.</li>
+</ul>
+</li>
+</ul>
+<hr>
+<h4>4.7. Modul Watchlist Harian (Pilihan Saham Menarik Hari Ini)</h4>
+<ul>
+<li><strong>Kategori Mode Investasi:</strong><ol>
+<li><em>Diskon Jumbo (Super Undervalued)</em>: Saham MoS $\ge 20%$.</li>
+<li><em>Dividen Jumbo</em>: Dividend Yield $\ge 6%$ per tahun.</li>
+<li><em>Rebound Hijau Hari Ini</em>: Penguatan harga $\ge 1.5%$ dengan valuasi murah.</li>
+<li><em>Dekat Dasar (52W Low)</em>: Jarak harga $\le 12%$ dari titik terendah 52 minggu.</li>
+</ol>
+</li>
+<li><strong>Kategori Mode Swing Trade:</strong><ol>
+<li><em>🚀 Volume Breakout</em>: Lonjakan transaksi volume $\ge 1.4\times$ dan candle hijau.</li>
+<li><em>🟢 Oversold Pantulan</em>: RSI $\le 38$ dengan potensi <em>upside</em> ke resistance terdekat.</li>
+<li><em>⚡ Momentum Uptrend</em>: Bertengger di atas MA20 dengan kenaikan harga konsisten.</li>
+</ol>
+</li>
+</ul>
+<hr>
+<h4>4.8. Modul Watchlist Pribadi</h4>
+<ul>
+<li>Pengguna dapat menyimpan saham pantauan ke daftar pribadi dengan satu klik ikon bintang (⭐).</li>
+<li>Terintegrasi dengan database MongoDB dengan fallback otomatis ke <em>in-memory array</em> jika database eksternal belum dikonfigurasi.</li>
+</ul>
+
+  <script>
+    mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+    document.querySelectorAll('pre code.language-mermaid').forEach(function(el) {
+      var pre = el.parentElement;
+      var div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = el.textContent;
+      pre.parentElement.replaceChild(div, pre);
+    });
+    renderMathInElement(document.body, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false}
+      ]
+    });
+  </script>
+</body>
+</html>

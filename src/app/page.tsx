@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Search, Info, ArrowUpRight, ArrowDownRight, RefreshCw, AlertCircle, CheckCircle2, AlertTriangle, Coins, Calendar, Calculator, ChevronDown, ChevronUp, Wallet, BookOpen, Target, Layers, X, Compass, DollarSign, ShieldAlert, Award, TrendingUp, Filter, Star, Activity, Sparkles, TrendingDown, Trash2, Flame, Zap } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Search, Info, ArrowUpRight, ArrowDownRight, RefreshCw, AlertCircle, CheckCircle2, AlertTriangle, Coins, Calendar, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Wallet, BookOpen, Target, Layers, X, Compass, DollarSign, ShieldAlert, Award, TrendingUp, Filter, Activity, Sparkles, TrendingDown, Flame, Zap, Loader2, Star } from 'lucide-react';
 
 interface MetricBand {
   current: number | null;
@@ -52,24 +52,50 @@ interface DailyPickItem {
   rsi?: number | null;
   volSpike?: number | null;
   swingPotential?: number;
+  resistance?: number;
+  support?: number;
+  idealBuyPrice?: number;
+  stopLoss?: number;
+  riskPercent?: number;
+  ihsgWarning?: string | null;
+}
+
+interface IhsgState {
+  price: number;
+  changePercent: number;
+  status: 'bullish' | 'sideways' | 'bearish';
+  label: string;
+  advice: string;
 }
 
 interface TechnicalIndicators {
   rsi: number;
+  ma5: number | null;
+  ma10: number | null;
   ma20: number | null;
   ma50: number | null;
+  isBullishAlignment: boolean;
+  isGoldenCross: boolean;
   volSpike: number;
   resistance: number;
   support: number;
+  idealBuyPrice?: number;
+  stopLoss?: number;
+  riskPercent?: number;
   trend: 'uptrend' | 'downtrend' | 'sideways';
   signal: string;
   signalBadge: string;
+  activeTags?: { label: string; badge: string; tooltip: string }[];
 }
 
 interface StockData {
   ticker: string;
   fullTicker: string;
   name: string;
+  sector?: string | null;
+  industry?: string | null;
+  website?: string | null;
+  logoUrl?: string | null;
   price: number;
   changePercent: number;
   marketCap?: number | null;
@@ -96,11 +122,17 @@ interface ScreenerStock {
   marginOfSafety: number;
   status: 'undervalued' | 'fair' | 'expensive';
   rsi?: number | null;
+  ma5?: number | null;
+  ma10?: number | null;
+  ma20?: number | null;
+  isBullishAlignment?: boolean;
+  isGoldenCross?: boolean;
   volSpike?: number | null;
   trend?: 'uptrend' | 'downtrend' | 'sideways';
   swingPotential?: number;
   swingSignal?: string;
   swingSignalBadge?: string;
+  signalTags?: { label: string; badge: string; tooltip: string }[];
 }
 
 // Helper untuk format angka dengan separator titik (contoh: 10000000 -> 10.000.000)
@@ -124,16 +156,23 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [showFormulaDetails, setShowFormulaDetails] = useState(false);
 
-  // Tab Sidebar Kanan: 'plan' (Rencana Beli) | 'ranking' (Rank Saham Diskon) | 'daily' (Pilihan Menarik Hari Ini) | 'watchlist' (Watchlist Saya)
-  const [rightPanelTab, setRightPanelTab] = useState<'plan' | 'ranking' | 'daily' | 'watchlist'>('plan');
+  // Tab Sidebar Kanan: 'plan' (Rencana Beli) | 'ranking' (Rank Saham Diskon) | 'daily' (Pilihan Menarik Hari Ini)
+  const [rightPanelTab, setRightPanelTab] = useState<'plan' | 'ranking' | 'daily'>('plan');
 
   // State Watchlist Harian (Pilihan Saham Menarik Hari Ini)
   const [dailyPicks, setDailyPicks] = useState<DailyPickItem[]>([]);
   const [dailyLoading, setDailyLoading] = useState<boolean>(false);
   const [dailyDateFormatted, setDailyDateFormatted] = useState<string>('');
+  const [ihsg, setIhsg] = useState<IhsgState | null>(null);
+
+  // Refs untuk auto-scroll container list saat pagination diubah
+  const screenerListRef = useRef<HTMLDivElement | null>(null);
+  const dailyListRef = useRef<HTMLDivElement | null>(null);
 
   const fetchDailyWatchlist = async (overrideMode?: 'invest' | 'swing') => {
     setDailyLoading(true);
+    setDailyPicks([]); // Kosongkan data lama agar saham yang di-exclude tidak muncul sesaat
+    setDailyPage(1);
     const activeMode = overrideMode || tradeMode;
     try {
       const res = await fetch(`/api/daily-watchlist?mode=${activeMode}`);
@@ -141,6 +180,9 @@ export default function Home() {
       if (res.ok && data.picks) {
         setDailyPicks(data.picks);
         setDailyDateFormatted(data.dateFormatted || '');
+        if (data.ihsg) {
+          setIhsg(data.ihsg);
+        }
       }
     } catch (e) {
       console.error('Error fetching daily watchlist:', e);
@@ -176,53 +218,9 @@ export default function Home() {
   const [screenerMinCapInput, setScreenerMinCapInput] = useState<string>('1'); // Dalam Triliun (default 1T)
   const [activeMinCapDisplay, setActiveMinCapDisplay] = useState<string>('Rp 1 Triliun');
   const [priceFilter, setPriceFilter] = useState<'all' | 'under100' | '100to1000' | 'above1000'>('all');
-
-  // State Watchlist (MongoDB + Fallback)
-  interface WatchlistItem {
-    ticker: string;
-    name: string;
-    addedAt: string;
-    notes?: string;
-  }
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [watchlistLoading, setWatchlistLoading] = useState<boolean>(false);
-  const [watchlistStorage, setWatchlistStorage] = useState<string>('');
-
-  const fetchWatchlist = async () => {
-    setWatchlistLoading(true);
-    try {
-      const res = await fetch('/api/watchlist');
-      const data = await res.json();
-      if (res.ok && data.items) {
-        setWatchlist(data.items);
-        setWatchlistStorage(data.storage);
-      }
-    } catch (e) {
-      console.error('Error fetching watchlist:', e);
-    } finally {
-      setWatchlistLoading(false);
-    }
-  };
-
-  const toggleWatchlist = async (ticker: string, name: string) => {
-    const isSaved = watchlist.some((w) => w.ticker === ticker);
-    try {
-      if (isSaved) {
-        setWatchlist((prev) => prev.filter((w) => w.ticker !== ticker));
-        await fetch(`/api/watchlist?ticker=${ticker}`, { method: 'DELETE' });
-      } else {
-        const newItem = { ticker, name, addedAt: new Date().toISOString() };
-        setWatchlist((prev) => [newItem, ...prev]);
-        await fetch('/api/watchlist', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticker, name }),
-        });
-      }
-    } catch (e) {
-      console.error('Error toggling watchlist:', e);
-    }
-  };
+  const [screenerPage, setScreenerPage] = useState<number>(1);
+  const [dailyPage, setDailyPage] = useState<number>(1);
+  const ITEMS_PER_PAGE = 8;
 
   const fetchStock = async (query: string) => {
     if (!query.trim()) return;
@@ -275,6 +273,8 @@ export default function Home() {
 
   const fetchScreener = async (customCapInTrillion?: number, overrideMode?: 'invest' | 'swing') => {
     setScreenerLoading(true);
+    setScreenerList([]); // Kosongkan data lama agar transisi data bersih
+    setScreenerPage(1);
     const activeMode = overrideMode || tradeMode;
     try {
       const capTrillion = customCapInTrillion !== undefined ? customCapInTrillion : (parseFloat(screenerMinCapInput.replace(/,/g, '.')) || 1);
@@ -297,13 +297,20 @@ export default function Home() {
   useEffect(() => {
     fetchStock('BBRI');
     fetchScreener(undefined, tradeMode);
-    fetchWatchlist();
     fetchDailyWatchlist(tradeMode);
   }, []);
 
   // Sinkronisasi otomatis saat mode global (Invest vs Swing) berubah
   const handleTradeModeChange = (newMode: 'invest' | 'swing') => {
     setTradeMode(newMode);
+    setScreenerPage(1);
+    setDailyPage(1);
+    // Jika mode berubah, sesuaikan tab agar tidak berada di tab yang tidak sesuai mode:
+    if (newMode === 'swing' && rightPanelTab === 'ranking') {
+      setRightPanelTab('daily');
+    } else if (newMode === 'invest' && rightPanelTab === 'daily') {
+      setRightPanelTab('ranking');
+    }
     fetchScreener(undefined, newMode);
     fetchDailyWatchlist(newMode);
   };
@@ -580,6 +587,7 @@ export default function Home() {
       },
       // TARGET PROFIT & STOP LOSS KHUSUS SWING TRADE (JANGKA PENDEK)
       swingTrade: {
+        idealBuyPrice: stock.technicals?.idealBuyPrice || P0,
         tp1: {
           targetPrice: stock.technicals?.resistance ? stock.technicals.resistance : Math.round(P0 * 1.05), // +5% atau Resistance
           gainPercent: stock.technicals?.resistance
@@ -595,16 +603,23 @@ export default function Home() {
           action: 'Kunci profit sisa 50% saat momentum swing maksimal',
         },
         sl: {
-          slPrice: stock.technicals?.support ? Math.min(Math.round(P0 * 0.96), stock.technicals.support) : Math.round(P0 * 0.95), // -4% s/d -5%
-          lossPercent: stock.technicals?.support
-            ? Math.round(((Math.min(Math.round(P0 * 0.96), stock.technicals.support) - P0) / P0) * 1000) / 10
-            : -5.0,
-          label: 'Cut Loss Ketat (Support)',
-          action: 'Disiplin exit jika breakdown support teknikal 20 hari',
+          slPrice: stock.technicals?.stopLoss
+            ? stock.technicals.stopLoss
+            : stock.technicals?.support
+            ? Math.round(stock.technicals.support * 0.98)
+            : Math.round(P0 * 0.95),
+          lossPercent: stock.technicals?.riskPercent
+            ? stock.technicals.riskPercent
+            : stock.technicals?.support
+            ? Math.round(Math.abs((P0 - Math.round(stock.technicals.support * 0.98)) / P0) * 1000) / 10
+            : 5.0,
+          label: 'Cut Loss Ketat (SL)',
+          action: 'Disiplin cut loss jika breakdown support teknikal 20 hari',
         },
         rrRatio: (() => {
           const potGain = (stock.technicals?.resistance ? stock.technicals.resistance : P0 * 1.05) - P0;
-          const potLoss = P0 - (stock.technicals?.support ? Math.min(Math.round(P0 * 0.96), stock.technicals.support) : P0 * 0.95);
+          const slP = stock.technicals?.stopLoss || (stock.technicals?.support ? Math.round(stock.technicals.support * 0.98) : P0 * 0.95);
+          const potLoss = P0 - slP;
           if (potLoss <= 0) return '1 : 2.5';
           const r = Math.round((potGain / potLoss) * 10) / 10;
           return `1 : ${r > 0 ? r : 2.0}`;
@@ -625,6 +640,105 @@ export default function Home() {
   const simAvgResult = calculateSimulatedAvg();
   const strategyResult = calculateBuyStrategy();
 
+  // Hitung Skor & Rating Saham Menyeluruh (Overall Stock Rating: 1 - 5 Bintang / 0 - 100 Skor)
+  const calculateOverallRating = () => {
+    if (!stock) return null;
+
+    let score = 50; // Skor baseline
+
+    if (tradeMode === 'swing') {
+      // MODE SWING / TRADING (Fokus: Momentum, Sinyal Rebound, MA5/10/20, Volume)
+      // 1. Susunan MA (Maks +25)
+      if (stock.technicals?.isBullishAlignment) score += 25;
+      else if (stock.technicals?.isGoldenCross) score += 18;
+      else if (stock.technicals?.ma5 && stock.price >= stock.technicals.ma5) score += 10;
+      else if (stock.technicals?.ma20 && stock.price < stock.technicals.ma20) score -= 15;
+
+      // 2. Volume Spike (Maks +20)
+      if (stock.technicals?.volSpike && stock.technicals.volSpike >= 1.5) score += 20;
+      else if (stock.technicals?.volSpike && stock.technicals.volSpike >= 1.2) score += 10;
+      else if (stock.technicals?.volSpike && stock.technicals.volSpike < 0.6) score -= 5;
+
+      // 3. RSI Zone (Maks +15)
+      if (stock.technicals?.rsi) {
+        if (stock.technicals.rsi <= 35) score += 18; // Oversold rebound sweet spot
+        else if (stock.technicals.rsi >= 45 && stock.technicals.rsi <= 65) score += 12; // Healthy momentum
+        else if (stock.technicals.rsi >= 75) score -= 15; // Dangerously overbought
+      }
+
+      // 4. Kenaikan hari ini (+/- 10)
+      if (stock.changePercent > 0) score += Math.min(Math.round(stock.changePercent * 2), 10);
+      else if (stock.changePercent < -3) score -= 8;
+    } else {
+      // MODE INVESTASI (Fokus: Valuasi Margin of Safety, Dividen, Kesehatan Finansial ROE & DER)
+      // 1. Margin of Safety (Maks +30)
+      const mos = evalResult?.marginOfSafety ?? 0;
+      if (mos >= 25) score += 30;
+      else if (mos >= 15) score += 20;
+      else if (mos >= 0) score += 10;
+      else if (mos < -15) score -= 20;
+      else score -= 10;
+
+      // 2. Dividen Yield (Maks +15)
+      const y = stock.dividend.yieldPercent ?? 0;
+      if (y >= 6.0) score += 15;
+      else if (y >= 3.5) score += 10;
+      else if (y > 0) score += 5;
+
+      // 3. ROE Profitabilitas (Maks +15)
+      const roe = stock.health?.roe ?? 0;
+      if (roe >= 18) score += 15;
+      else if (roe >= 12) score += 10;
+      else if (roe < 4) score -= 10;
+
+      // 4. DER / Utang
+      const der = stock.health?.der ?? 0;
+      if (!stock.health?.isBank && der > 2.0) score -= 10;
+      else if (!stock.health?.isBank && der <= 0.8) score += 10;
+    }
+
+    // Normalisasi skor ke rentang 10 s/d 99
+    score = Math.max(15, Math.min(98, score));
+
+    // Konversi ke 5 skala bintang
+    let stars = 3.0;
+    let label = 'Netral (Hold / Wait)';
+    let badgeColor = 'bg-slate-100 text-slate-800 border-slate-300';
+    let starColor = 'text-amber-400 fill-amber-400';
+
+    if (score >= 82) {
+      stars = 5.0;
+      label = tradeMode === 'swing' ? 'Strong Buy (Sinyal Super Kuat)' : 'Sangat Layak Beli (Diskon Jumbo)';
+      badgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-200';
+    } else if (score >= 70) {
+      stars = 4.0;
+      label = tradeMode === 'swing' ? 'Buy on Breakout / Rebound' : 'Layak Koleksi (Akumulasi)';
+      badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    } else if (score >= 52) {
+      stars = 3.0;
+      label = tradeMode === 'swing' ? 'Wait & See (Tunggu Konfirmasi)' : 'Wajar (Cicil DCA Santai)';
+      badgeColor = 'bg-amber-50 text-amber-800 border-amber-200';
+    } else if (score >= 38) {
+      stars = 2.0;
+      label = tradeMode === 'swing' ? 'Kurang Ideal (Rawan Koreksi)' : 'Cenderung Mahal / Pantau';
+      badgeColor = 'bg-orange-50 text-orange-800 border-orange-200';
+    } else {
+      stars = 1.0;
+      label = tradeMode === 'swing' ? 'Hindari (Downtrend / Overbought)' : 'Kurang Layak (Overvalued)';
+      badgeColor = 'bg-rose-50 text-rose-800 border-rose-200';
+    }
+
+    return {
+      score,
+      stars,
+      label,
+      badgeColor,
+      starColor,
+    };
+  };
+
+  const overallRating = calculateOverallRating();
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 antialiased font-sans">
       <div className="max-w-7xl mx-auto px-4 py-8 md:py-10 space-y-6">
@@ -633,11 +747,29 @@ export default function Home() {
         <header className="border-b border-slate-200 pb-5 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-200 text-slate-700">
                   IDX / BEI LIVE
                 </span>
-                <span className="text-xs text-slate-500 font-medium">
+                {ihsg && (
+                  <div className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-xs font-semibold shadow-2xs ${
+                    ihsg.status === 'bearish'
+                      ? 'bg-rose-50 border-rose-200 text-rose-800'
+                      : ihsg.status === 'bullish'
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-amber-50 border-amber-200 text-amber-800'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${
+                      ihsg.status === 'bearish' ? 'bg-rose-500 animate-pulse' : ihsg.status === 'bullish' ? 'bg-emerald-500' : 'bg-amber-500'
+                    }`}></span>
+                    <span>IHSG {ihsg.price ? ihsg.price.toLocaleString('id-ID') : ''}</span>
+                    <span className="font-mono font-bold">
+                      ({ihsg.changePercent >= 0 ? '+' : ''}{ihsg.changePercent.toFixed(2)}%)
+                    </span>
+                    <span className="text-[11px] opacity-80 hidden sm:inline">• {ihsg.label}</span>
+                  </div>
+                )}
+                <span className="text-xs text-slate-500 font-medium hidden md:inline">
                   Valuasi Fundamental, Rencana Eksekusi & Screener
                 </span>
               </div>
@@ -714,22 +846,31 @@ export default function Home() {
 
           {/* Quick Preset Buttons */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-slate-400 mr-1">Saham dividen & populer:</span>
-            {['BBRI', 'BBNI', 'BMRI', 'BBCA', 'PTBA', 'ITMG', 'ADRO', 'ASII', 'TLKM', 'PTRO'].map(
-              (t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => {
-                    setTickerInput(t);
-                    fetchStock(t);
-                  }}
-                  className="px-2.5 py-1 rounded bg-white border border-slate-200 text-slate-700 hover:border-slate-400 font-mono text-xs font-medium cursor-pointer"
-                >
-                  {t}
-                </button>
-              )
-            )}
+            <span className="text-slate-400 mr-1">
+              {tradeMode === 'swing' ? 'Saham swing & scalping populer:' : 'Saham dividen & investasi populer:'}
+            </span>
+            {(tradeMode === 'swing'
+              ? ['GOTO', 'BRIS', 'MEDC', 'ANTM', 'TINS', 'PTRO', 'CUAN', 'BREN', 'PANI', 'WIFI', 'BUMI', 'ENRG']
+              : ['BBRI', 'BBCA', 'BMRI', 'BBNI', 'ASII', 'TLKM', 'PTBA', 'ITMG', 'ADRO', 'ICBP', 'UNVR', 'KLBF']
+            ).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => {
+                  setTickerInput(t);
+                  fetchStock(t);
+                }}
+                className={`px-2.5 py-1 rounded border font-mono text-xs font-semibold cursor-pointer transition ${
+                  stock?.ticker === t
+                    ? tradeMode === 'swing'
+                      ? 'bg-amber-400 border-amber-500 text-slate-950 shadow-xs'
+                      : 'bg-emerald-600 border-emerald-700 text-white shadow-xs'
+                    : 'bg-white border-slate-200 text-slate-700 hover:border-slate-400 hover:bg-slate-50'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </header>
 
@@ -741,61 +882,144 @@ export default function Home() {
           </div>
         )}
 
+        {/* TOP PROGRESS BAR LOADING ANIMATION */}
+        {loading && (
+          <div className="w-full h-1 bg-slate-200 rounded-full overflow-hidden shadow-inner">
+            <div className="h-full bg-gradient-to-r from-indigo-500 via-sky-400 to-emerald-500 animate-[indeterminate_1.5s_infinite_linear] origin-left w-full" />
+          </div>
+        )}
+
         {/* 2-COLUMN MAIN LAYOUT: KIRI (FUNDAMENTAL & RUMUS) | KANAN (RENCANA BELI & RANKING SAHAM) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
           {/* KOLOM KIRI (7 COLS): DATA FUNDAMENTAL, VERDICT, DIVIDEN & RUMUS */}
           <div className="lg:col-span-7 space-y-6">
+            {loading && !stock && (
+              <div className="bg-white rounded-xl border border-slate-200 p-8 shadow-sm space-y-6 animate-pulse">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-xl bg-slate-200" />
+                  <div className="space-y-2 flex-1">
+                    <div className="h-5 bg-slate-200 rounded w-1/4" />
+                    <div className="h-4 bg-slate-100 rounded w-1/2" />
+                  </div>
+                  <div className="h-10 bg-slate-200 rounded-lg w-28" />
+                </div>
+                <div className="h-28 bg-slate-100 rounded-xl" />
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[...Array(4)].map((_, i) => (
+                    <div key={i} className="h-20 bg-slate-100 rounded-xl" />
+                  ))}
+                </div>
+                <div className="py-6 flex flex-col items-center justify-center gap-2 text-slate-400">
+                  <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                  <p className="text-xs font-semibold text-slate-600">Mengambil data valuasi & historis dari BEI / Yahoo Finance...</p>
+                </div>
+              </div>
+            )}
+
             {stock && evalResult && (
-              <>
+              <div className={`space-y-6 transition-opacity duration-200 ${loading ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
                 {/* Verdict Hero Card */}
                 <div
                   className={`p-5 sm:p-6 rounded-xl border bg-white shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${evalResult.cardBorder}`}
                 >
-                  <div className="space-y-1.5 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2.5 py-0.5 rounded border border-slate-200">
-                        {stock.fullTicker}
-                      </span>
-                      <h2 className="text-base sm:text-lg font-bold text-slate-900">{stock.name}</h2>
-                      {stock.marketCapFormatted && (
-                        <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                          M.Cap: {stock.marketCapFormatted}
-                        </span>
-                      )}
-                      {/* Button Toggle Watchlist */}
-                      <button
-                        type="button"
-                        onClick={() => toggleWatchlist(stock.ticker, stock.name)}
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border transition cursor-pointer ${
-                          watchlist.some((w) => w.ticker === stock.ticker)
-                            ? 'bg-amber-50 text-amber-800 border-amber-300'
-                            : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
-                        }`}
-                        title="Simpan ke Watchlist"
-                      >
-                        <Star className={`w-3.5 h-3.5 ${watchlist.some((w) => w.ticker === stock.ticker) ? 'fill-amber-400 text-amber-500' : 'text-slate-400'}`} />
-                        <span>{watchlist.some((w) => w.ticker === stock.ticker) ? 'Tersimpan' : 'Watchlist'}</span>
-                      </button>
+                  <div className="space-y-2 flex-1">
+                    <div className="flex items-start sm:items-center gap-3">
+                      {/* Logo Perusahaan */}
+                      <div className="w-12 h-12 rounded-xl bg-white border border-slate-200 p-1 flex items-center justify-center shrink-0 shadow-xs overflow-hidden">
+                        <img
+                          src={stock.logoUrl || `https://assets.stockbit.com/logos/companies/${stock.ticker}.png`}
+                          alt={`${stock.ticker} logo`}
+                          className="w-full h-full object-contain"
+                          onError={(e) => {
+                            // Fallback jika logo tidak tersedia di CDN
+                            (e.target as HTMLElement).style.display = 'none';
+                            const parent = (e.target as HTMLElement).parentElement;
+                            if (parent) {
+                              parent.innerHTML = `<span class="font-extrabold text-xs font-mono text-slate-700">${stock.ticker}</span>`;
+                            }
+                          }}
+                        />
+                      </div>
+
+                      <div className="space-y-1 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-xs bg-slate-900 text-white px-2.5 py-0.5 rounded shadow-xs">
+                            {stock.ticker}
+                          </span>
+                          <h2 className="text-base sm:text-lg font-bold text-slate-900 leading-tight">{stock.name}</h2>
+                          {stock.marketCapFormatted && (
+                            <span className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                              M.Cap: {stock.marketCapFormatted}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Sektor & Industri Perusahaan */}
+                        {(stock.sector || stock.industry) && (
+                          <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-slate-500 pt-0.5">
+                            {stock.sector && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200/60">
+                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                Sektor: {stock.sector}
+                              </span>
+                            )}
+                            {stock.industry && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium">
+                                Industri: {stock.industry}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="flex items-baseline gap-3 pt-1">
-                      <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-                        {formatRupiah(stock.price)}
-                      </span>
-                      <span
-                        className={`inline-flex items-center text-xs font-semibold ${
-                          stock.changePercent >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                        }`}
-                      >
-                        {stock.changePercent >= 0 ? (
-                          <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-                        ) : (
-                          <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
-                        )}
-                        {stock.changePercent >= 0 ? '+' : ''}
-                        {stock.changePercent.toFixed(2)}% hari ini
-                      </span>
+                    <div className="flex items-center gap-3 pt-1 flex-wrap">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight font-mono">
+                          {formatRupiah(stock.price)}
+                        </span>
+                        <span
+                          className={`inline-flex items-center text-xs font-semibold ${
+                            stock.changePercent >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                          }`}
+                        >
+                          {stock.changePercent >= 0 ? (
+                            <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
+                          ) : (
+                            <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
+                          )}
+                          {stock.changePercent >= 0 ? '+' : ''}
+                          {stock.changePercent.toFixed(2)}%
+                        </span>
+                      </div>
+
+                      {/* OVERALL STOCK RATING BADGE */}
+                      {overallRating && (
+                        <div
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition shadow-2xs ${overallRating.badgeColor}`}
+                          title={`Rating Menyeluruh (${tradeMode === 'swing' ? 'Swing Trade' : 'Investasi'}): Skor ${overallRating.score}/100 - ${overallRating.label}`}
+                        >
+                          <div className="flex items-center gap-0.5">
+                            {[1, 2, 3, 4, 5].map((s) => (
+                              <Star
+                                key={s}
+                                className={`w-3 h-3 ${
+                                  s <= overallRating.stars
+                                    ? 'text-amber-500 fill-amber-400'
+                                    : 'text-slate-300'
+                                }`}
+                              />
+                            ))}
+                          </div>
+                          <span className="font-mono text-[11px] font-extrabold">
+                            {overallRating.score}
+                          </span>
+                          <span className="text-[10px] font-normal opacity-80 hidden sm:inline">
+                            • {overallRating.label}
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="pt-2 text-xs text-slate-700 space-y-1 bg-white/70 p-3 rounded-lg border border-slate-200/80">
@@ -1252,10 +1476,22 @@ export default function Home() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2.5 py-1 rounded-md text-xs font-bold border flex items-center gap-1.5 ${stock.technicals.signalBadge}`}>
-                          {stock.technicals.signal}
-                        </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {stock.technicals.activeTags && stock.technicals.activeTags.length > 0 ? (
+                          stock.technicals.activeTags.map((tag, idx) => (
+                            <span
+                              key={idx}
+                              title={tag.tooltip}
+                              className={`px-2 py-0.5 rounded-md text-[11px] font-bold border flex items-center gap-1 shadow-2xs ${tag.badge}`}
+                            >
+                              {tag.label}
+                            </span>
+                          ))
+                        ) : (
+                          <span className={`px-2.5 py-1 rounded-md text-xs font-bold border flex items-center gap-1.5 ${stock.technicals.signalBadge}`}>
+                            {stock.technicals.signal}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -1285,19 +1521,36 @@ export default function Home() {
                         </span>
                       </div>
 
-                      {/* Moving Average Status (MA20) */}
+                      {/* Moving Average Status (MA5, MA10, MA20) */}
                       <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-                        <span className="text-[10px] text-slate-500 font-medium block">MA20 (Tren Pendek)</span>
-                        <div className="flex items-baseline gap-1">
-                          <span className="font-mono font-bold text-sm text-slate-800">
-                            {stock.technicals.ma20 ? formatRupiah(stock.technicals.ma20) : '-'}
-                          </span>
+                        <div className="flex justify-between items-center">
+                          <span className="text-[10px] text-slate-500 font-medium block">Moving Averages</span>
+                          {stock.technicals.isBullishAlignment && (
+                            <span className="text-[9px] font-extrabold text-emerald-800 bg-emerald-100 px-1 rounded">
+                              Bullish 5 &gt; 10 &gt; 20
+                            </span>
+                          )}
                         </div>
-                        <span className="text-[10px] text-slate-400 block leading-tight">
-                          {stock.technicals.ma20 && stock.price >= stock.technicals.ma20
-                            ? '✅ Di Atas MA20 (Uptrend)'
-                            : 'Di Bawah MA20 (Tekanan)'}
-                        </span>
+                        <div className="text-[11px] font-mono font-semibold space-y-0.5 pt-0.5">
+                          <div className="flex justify-between">
+                            <span className="text-slate-500 font-sans text-[10px]">MA5 (1W):</span>
+                            <span className={stock.price >= (stock.technicals.ma5 || 0) ? 'text-emerald-700 font-bold' : 'text-slate-700'}>
+                              {stock.technicals.ma5 ? formatRupiah(stock.technicals.ma5) : '-'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500 font-sans text-[10px]">MA10 (2W):</span>
+                            <span className={stock.price >= (stock.technicals.ma10 || 0) ? 'text-emerald-700 font-bold' : 'text-slate-700'}>
+                              {stock.technicals.ma10 ? formatRupiah(stock.technicals.ma10) : '-'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500 font-sans text-[10px]">MA20 (1M):</span>
+                            <span className={stock.price >= (stock.technicals.ma20 || 0) ? 'text-emerald-700 font-bold' : 'text-slate-700'}>
+                              {stock.technicals.ma20 ? formatRupiah(stock.technicals.ma20) : '-'}
+                            </span>
+                          </div>
+                        </div>
                       </div>
 
                       {/* Volume Spike Ratio */}
@@ -1375,7 +1628,7 @@ export default function Home() {
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-slate-700">
-                          {stock.dividend.history.slice(0, 5).map((item, idx) => (
+                          {stock.dividend.history.slice(0, 5).map((item: DividendPayment, idx: number) => (
                             <tr key={idx} className="hover:bg-slate-50/80">
                               <td className="py-2 px-2.5 font-medium text-slate-900">{formatDate(item.date)}</td>
                               <td className="py-2 px-2.5 text-right font-mono font-semibold text-slate-700">
@@ -1484,15 +1737,15 @@ export default function Home() {
                     )}
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
 
           {/* KOLOM KANAN (5 COLS): FITUR RENCANA BELI (LANGSUNG TAMPIL DI UI) & RANKING SAHAM NON-GORENGAN */}
           <div className="lg:col-span-5 space-y-4">
 
-            {/* TAB SELECTOR KANAN (4 TABS) */}
-            <div className="grid grid-cols-4 p-1 bg-slate-200/80 rounded-xl text-[11px] font-bold shadow-inner">
+            {/* TAB SELECTOR KANAN (MODE-DEPENDENT: 2 TABS) */}
+            <div className="grid grid-cols-2 p-1 bg-slate-200/80 rounded-xl text-[11px] font-bold shadow-inner">
               <button
                 type="button"
                 onClick={() => setRightPanelTab('plan')}
@@ -1506,51 +1759,36 @@ export default function Home() {
                 <Compass className="w-3.5 h-3.5" />
                 <span className="truncate">Rencana</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setRightPanelTab('ranking')}
-                className={`py-2 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer ${
-                  rightPanelTab === 'ranking'
-                    ? 'bg-white text-indigo-700 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Rank Saham Diskon (M.Cap)"
-              >
-                <Award className="w-3.5 h-3.5 text-amber-600" />
-                <span className="truncate">Rank Diskon</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setRightPanelTab('daily');
-                  fetchDailyWatchlist();
-                }}
-                className={`py-2 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer ${
-                  rightPanelTab === 'daily'
-                    ? 'bg-white text-rose-700 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Watchlist Saham Menarik Hari Ini"
-              >
-                <Flame className="w-3.5 h-3.5 text-rose-500" />
-                <span className="truncate">Hari Ini ({dailyPicks.length})</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setRightPanelTab('watchlist');
-                  fetchWatchlist();
-                }}
-                className={`py-2 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer ${
-                  rightPanelTab === 'watchlist'
-                    ? 'bg-white text-amber-700 shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Watchlist Tersimpan (MongoDB)"
-              >
-                <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-400" />
-                <span className="truncate">Watchlist ({watchlist.length})</span>
-              </button>
+
+              {tradeMode === 'invest' ? (
+                <button
+                  type="button"
+                  onClick={() => setRightPanelTab('ranking')}
+                  className={`py-2 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer ${
+                    rightPanelTab === 'ranking'
+                      ? 'bg-white text-indigo-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Rank Saham Undervalued (Diskon Market Cap)"
+                >
+                  <Award className="w-3.5 h-3.5 text-amber-600" />
+                  <span className="truncate">Rank Diskon</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setRightPanelTab('daily')}
+                  className={`py-2 rounded-lg transition flex items-center justify-center gap-1 cursor-pointer ${
+                    rightPanelTab === 'daily'
+                      ? 'bg-white text-rose-700 shadow-sm'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Pilihan Saham Menarik Hari Ini (Swing Trade)"
+                >
+                  <Flame className="w-3.5 h-3.5 text-rose-500" />
+                  <span className="truncate">Hari Ini ({dailyPicks.length})</span>
+                </button>
+              )}
             </div>
 
             {/* PANEL KANAN 1: RENCANA STRATEGI BELI & ALOKASI BUDGET + AVERAGE DOWN */}
@@ -1583,14 +1821,14 @@ export default function Home() {
                     <button
                       type="button"
                       onClick={() => handleTradeModeChange('swing')}
-                      className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1 ${
+                      className={`px-2.5 py-1 rounded-md transition cursor-pointer flex items-center gap-1.5 ${
                         tradeMode === 'swing'
                           ? 'bg-amber-400 text-slate-950 shadow-xs font-bold'
                           : 'text-slate-500 hover:text-slate-800'
                       }`}
                     >
-                      <Zap className="w-3 h-3 text-slate-950" />
-                      <span>⚡ Swing Trade</span>
+                      <Zap className={`w-3.5 h-3.5 ${tradeMode === 'swing' ? 'text-slate-950 fill-slate-950' : 'text-slate-600'}`} />
+                      <span>Swing Trade</span>
                     </button>
                   </div>
                 </div>
@@ -1969,7 +2207,7 @@ export default function Home() {
                                       <div className="flex items-center gap-1.5">
                                         <span className="w-2 h-2 rounded-full bg-rose-500"></span>
                                         <strong className="text-slate-900 text-xs">
-                                          {isSwing ? 'Stop Loss Ketat (SL):' : 'Stop Loss (SL):'} {formatRupiah(slPrice)}
+                                          {isSwing ? 'Cut Loss Ketat (SL):' : 'Stop Loss (SL):'} {formatRupiah(slPrice)}
                                         </strong>
                                         <span className="text-[10px] font-bold text-rose-700 font-mono">
                                           (-{slLossPct}%)
@@ -1977,7 +2215,7 @@ export default function Home() {
                                       </div>
                                       <p className="text-[10px] text-slate-500">
                                         {isSwing
-                                          ? 'Cut loss disiplin jika breakdown support teknikal 20D'
+                                          ? `Disiplin cut loss jika breakdown support teknikal 20D (${formatRupiah(stock?.technicals?.support || slPrice)})`
                                           : 'Cut loss disiplin jika breakdown support / fundamental drop'}
                                       </p>
                                     </div>
@@ -2578,12 +2816,25 @@ export default function Home() {
                 </div>
 
                 {screenerLoading ? (
-                  <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin text-slate-500" />
-                    <span>{tradeMode === 'swing' ? 'Memindai momentum & sinyal swing cepat...' : 'Memindai valuasi saham liquid IDX...'}</span>
+                  <div className="py-6 space-y-3">
+                    <div className="flex items-center justify-center gap-2 text-xs font-semibold text-indigo-700 bg-indigo-50/70 border border-indigo-200/60 py-2 px-3 rounded-lg animate-pulse">
+                      <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+                      <span>{tradeMode === 'swing' ? '⚡ Memindai momentum & sinyal swing cepat...' : '🌿 Memindai valuasi & margin of safety saham IDX...'}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {[...Array(4)].map((_, i) => (
+                        <div key={i} className="p-3 rounded-xl border border-slate-100 bg-slate-50/60 animate-pulse flex items-center justify-between gap-3">
+                          <div className="space-y-1.5 flex-1">
+                            <div className="h-4 bg-slate-200 rounded w-1/4" />
+                            <div className="h-3 bg-slate-100 rounded w-1/2" />
+                          </div>
+                          <div className="h-6 bg-slate-200 rounded-md w-16" />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : (() => {
-                  const filteredStocks = screenerList.filter((item) => {
+                  const filteredStocks = screenerList.filter((item: ScreenerStock) => {
                     if (priceFilter === 'under100') return item.price >= 1 && item.price <= 100;
                     if (priceFilter === '100to1000') return item.price > 100 && item.price <= 1000;
                     if (priceFilter === 'above1000') return item.price > 1000;
@@ -2599,91 +2850,152 @@ export default function Home() {
                     );
                   }
 
+                  const totalPages = Math.ceil(filteredStocks.length / ITEMS_PER_PAGE) || 1;
+                  const currentPage = Math.min(screenerPage, totalPages);
+                  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+                  const paginatedStocks = filteredStocks.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
                   return (
-                    <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
-                      {filteredStocks.map((item, idx) => (
-                      <div
-                        key={item.ticker}
-                        onClick={() => {
-                          setTickerInput(item.ticker);
-                          fetchStock(item.ticker);
-                        }}
-                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                          stock?.ticker === item.ticker
-                            ? tradeMode === 'swing'
-                              ? 'bg-amber-50/60 border-amber-300 ring-1 ring-amber-200'
-                              : 'bg-indigo-50/50 border-indigo-300 ring-1 ring-indigo-200'
-                            : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/70'
-                        }`}
-                      >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold font-mono ${
-                              tradeMode === 'swing'
-                                ? 'bg-amber-100 border-amber-300 text-amber-900'
-                                : 'bg-slate-100 border-slate-200 text-slate-600'
-                            }`}>
-                              #{idx + 1}
-                            </span>
-                            <span className="font-bold text-xs text-slate-900 font-mono">{item.ticker}</span>
-                            {tradeMode === 'swing' && item.swingSignal && (
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${item.swingSignalBadge}`}>
-                                {item.swingSignal}
-                              </span>
-                            )}
-                            <span className="text-[10px] text-slate-400 truncate max-w-[110px]">{item.name}</span>
-                          </div>
+                    <div className="space-y-3">
+                      <div ref={screenerListRef} className="space-y-2 max-h-[500px] overflow-y-auto pr-1 scroll-smooth">
+                        {paginatedStocks.map((item: ScreenerStock, idx: number) => {
+                          const rankNumber = startIndex + idx + 1;
+                          return (
+                            <div
+                              key={item.ticker}
+                              onClick={() => {
+                                setTickerInput(item.ticker);
+                                fetchStock(item.ticker);
+                              }}
+                              className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                                stock?.ticker === item.ticker
+                                  ? tradeMode === 'swing'
+                                    ? 'bg-amber-50/60 border-amber-300 ring-1 ring-amber-200'
+                                    : 'bg-indigo-50/50 border-indigo-300 ring-1 ring-indigo-200'
+                                  : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/70'
+                              }`}
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className={`w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold font-mono ${
+                                    tradeMode === 'swing'
+                                      ? 'bg-amber-100 border-amber-300 text-amber-900'
+                                      : 'bg-slate-100 border-slate-200 text-slate-600'
+                                  }`}>
+                                    #{rankNumber}
+                                  </span>
+                                  <span className="font-bold text-xs text-slate-900 font-mono">{item.ticker}</span>
+                                  {tradeMode === 'swing' && (
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                      {item.signalTags && item.signalTags.length > 0 ? (
+                                        item.signalTags.map((tag, tagIdx) => (
+                                          <span
+                                            key={tagIdx}
+                                            title={tag.tooltip}
+                                            className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${tag.badge}`}
+                                          >
+                                            {tag.label}
+                                          </span>
+                                        ))
+                                      ) : item.swingSignal ? (
+                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold border ${item.swingSignalBadge}`}>
+                                          {item.swingSignal}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                  <span className="text-[10px] text-slate-400 truncate max-w-[110px]">{item.name}</span>
+                                </div>
 
-                          <div className="flex items-center gap-2 text-[10px] text-slate-500">
-                            {tradeMode === 'swing' ? (
-                              <>
-                                <span>RSI: <strong className={item.rsi && item.rsi <= 35 ? 'text-emerald-700 font-bold' : item.rsi && item.rsi >= 70 ? 'text-rose-700 font-bold' : 'text-slate-700'}>{item.rsi || '-'}</strong></span>
-                                <span>•</span>
-                                <span>Vol: <strong className={item.volSpike && item.volSpike >= 1.5 ? 'text-indigo-700 font-bold' : 'text-slate-700'}>{item.volSpike ? `${item.volSpike}x` : '1x'}</strong></span>
-                                <span>•</span>
-                                <span>Tren: <strong className="text-slate-700">{item.trend === 'uptrend' ? '📈 Naik' : item.trend === 'downtrend' ? '📉 Turun' : '➡️ Sideways'}</strong></span>
-                              </>
-                            ) : (
-                              <>
-                                <span>M.Cap: <strong className="text-slate-700">{item.marketCapFormatted}</strong></span>
-                                <span>•</span>
-                                <span>PER: <strong className="text-slate-700">{item.per ? `${item.per}x` : '-'}</strong></span>
-                                {item.dividendYield && (
-                                  <>
-                                    <span>•</span>
-                                    <span className="text-emerald-700 font-semibold">Yield {item.dividendYield}%</span>
-                                  </>
+                                <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                                  {tradeMode === 'swing' ? (
+                                    <>
+                                      <span>RSI: <strong className={item.rsi && item.rsi <= 35 ? 'text-emerald-700 font-bold' : item.rsi && item.rsi >= 70 ? 'text-rose-700 font-bold' : 'text-slate-700'}>{item.rsi || '-'}</strong></span>
+                                      <span>•</span>
+                                      <span>Vol: <strong className={item.volSpike && item.volSpike >= 1.5 ? 'text-indigo-700 font-bold' : 'text-slate-700'}>{item.volSpike ? `${item.volSpike}x` : '1x'}</strong></span>
+                                      <span>•</span>
+                                      <span>MA: <strong className={item.isBullishAlignment ? 'text-emerald-700 font-bold' : item.isGoldenCross ? 'text-indigo-700 font-bold' : 'text-slate-700'}>
+                                        {item.isBullishAlignment ? '5>10>20 🔥' : item.isGoldenCross ? 'GC MA5 ⚡' : item.trend === 'uptrend' ? '> MA20' : '< MA20'}
+                                      </strong></span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>M.Cap: <strong className="text-slate-700">{item.marketCapFormatted}</strong></span>
+                                      <span>•</span>
+                                      <span>PER: <strong className="text-slate-700">{item.per ? `${item.per}x` : '-'}</strong></span>
+                                      {item.dividendYield && (
+                                        <>
+                                          <span>•</span>
+                                          <span className="text-emerald-700 font-semibold">Yield {item.dividendYield}%</span>
+                                        </>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="text-right shrink-0">
+                                <span className="font-extrabold text-xs text-slate-900 font-mono block">
+                                  {formatRupiah(item.price)}
+                                </span>
+                                {tradeMode === 'swing' ? (
+                                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-100 text-amber-900 border border-amber-300">
+                                    Upside +{item.swingPotential}%
+                                  </span>
+                                ) : (
+                                  <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
+                                    item.marginOfSafety >= 15
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : item.marginOfSafety <= -15
+                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  }`}>
+                                    MoS {item.marginOfSafety >= 0 ? '+' : ''}{item.marginOfSafety}%
+                                  </span>
                                 )}
-                              </>
-                            )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* NAVIGASI PAGINATION RANKING */}
+                      {totalPages > 1 && (
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+                          <span className="text-[11px] font-medium text-slate-500">
+                            Hal <strong className="text-slate-800">{currentPage}</strong> dari <strong className="text-slate-800">{totalPages}</strong> ({filteredStocks.length} Saham)
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setScreenerPage((p) => Math.max(1, p - 1));
+                                screenerListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              disabled={currentPage <= 1}
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-[11px] flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                              Prev
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setScreenerPage((p) => Math.min(totalPages, p + 1));
+                                screenerListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              disabled={currentPage >= totalPages}
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-[11px] flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
+                            >
+                              Next
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
-
-                        <div className="text-right shrink-0">
-                          <span className="font-extrabold text-xs text-slate-900 font-mono block">
-                            {formatRupiah(item.price)}
-                          </span>
-                          {tradeMode === 'swing' ? (
-                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-100 text-amber-900 border border-amber-300">
-                              Upside +{item.swingPotential}%
-                            </span>
-                          ) : (
-                            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
-                              item.marginOfSafety >= 15
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : item.marginOfSafety <= -15
-                                ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                                : 'bg-amber-50 text-amber-700 border border-amber-200'
-                            }`}>
-                              MoS {item.marginOfSafety >= 0 ? '+' : ''}{item.marginOfSafety}%
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
+                      )}
+                    </div>
+                  );
+                })()}
             </div>
             )}
 
@@ -2740,193 +3052,216 @@ export default function Home() {
                   </span>
                 </div>
 
+                {/* BANNER SENTIMEN IHSG REALTIME */}
+                {tradeMode === 'swing' && ihsg && ihsg.status === 'bearish' && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-[11px] text-rose-900 flex items-start gap-2">
+                    <span className="text-base shrink-0">⚠️</span>
+                    <div>
+                      <strong className="block text-rose-950">Sentimen Pasar Melemah (IHSG {ihsg.changePercent >= 0 ? '+' : ''}{ihsg.changePercent.toFixed(2)}%)</strong>
+                      <p className="text-rose-800 leading-snug mt-0.5">{ihsg.advice}</p>
+                    </div>
+                  </div>
+                )}
+
                 {dailyLoading ? (
-                  <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin text-slate-500" />
-                    <span>{tradeMode === 'swing' ? 'Menganalisis sinyal & volume swing trade...' : 'Menganalisis emiten menarik hari ini...'}</span>
+                  <div className="py-6 space-y-3">
+                    <div className="flex items-center justify-center gap-2 text-xs font-semibold text-rose-700 bg-rose-50/70 border border-rose-200/60 py-2 px-3 rounded-lg animate-pulse">
+                      <Loader2 className="w-4 h-4 animate-spin text-rose-600" />
+                      <span>{tradeMode === 'swing' ? '⚡ Menganalisis sinyal & volume swing trade...' : '🌿 Memindai saham menarik hari ini...'}</span>
+                    </div>
+                    <div className="space-y-2.5">
+                      {[...Array(3)].map((_, i) => (
+                        <div key={i} className="p-3.5 rounded-xl border border-slate-100 bg-slate-50/60 animate-pulse space-y-2.5">
+                          <div className="flex justify-between items-center">
+                            <div className="h-4 bg-slate-200 rounded w-1/3" />
+                            <div className="h-4 bg-slate-200 rounded w-1/5" />
+                          </div>
+                          <div className="h-3 bg-slate-100 rounded w-4/5" />
+                          <div className="flex gap-2">
+                            <div className="h-5 bg-slate-100 rounded w-16" />
+                            <div className="h-5 bg-slate-100 rounded w-20" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ) : dailyPicks.length === 0 ? (
                   <div className="py-8 text-center text-xs text-slate-400 space-y-1">
                     <p className="font-semibold text-slate-600">Belum ada sinyal menarik saat ini</p>
                     <p className="text-[11px]">Silakan klik tombol refresh untuk memindai pasar.</p>
                   </div>
-                ) : (
-                  <div className="space-y-2.5 max-h-[520px] overflow-y-auto pr-1">
-                    {dailyPicks.map((pick) => (
-                      <div
-                        key={pick.ticker}
-                        onClick={() => {
-                          setTickerInput(pick.ticker);
-                          fetchStock(pick.ticker);
-                        }}
-                        className={`p-3.5 rounded-xl border transition-all cursor-pointer space-y-2 ${
-                          stock?.ticker === pick.ticker
-                            ? tradeMode === 'swing'
-                              ? 'bg-amber-50/60 border-amber-300 ring-1 ring-amber-200'
-                              : 'bg-rose-50/40 border-rose-300 ring-1 ring-rose-200'
-                            : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/70'
-                        }`}
-                      >
-                        {/* Header Kartu: Ticker & Badge Kategori */}
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono font-extrabold text-sm text-slate-900">{pick.ticker}</span>
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${pick.tagColor}`}>
-                                {pick.categoryLabel}
-                              </span>
+                ) : (() => {
+                  const totalDailyPages = Math.ceil(dailyPicks.length / ITEMS_PER_PAGE) || 1;
+                  const currentDailyPage = Math.min(dailyPage, totalDailyPages);
+                  const startDailyIndex = (currentDailyPage - 1) * ITEMS_PER_PAGE;
+                  const paginatedDailyPicks = dailyPicks.slice(startDailyIndex, startDailyIndex + ITEMS_PER_PAGE);
+
+                  return (
+                    <div className="space-y-3">
+                      <div ref={dailyListRef} className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1 scroll-smooth">
+                        {paginatedDailyPicks.map((pick: DailyPickItem) => (
+                          <div
+                            key={pick.ticker}
+                            onClick={() => {
+                              setTickerInput(pick.ticker);
+                              fetchStock(pick.ticker);
+                            }}
+                            className={`p-3.5 rounded-xl border transition-all cursor-pointer space-y-2 ${
+                              stock?.ticker === pick.ticker
+                                ? tradeMode === 'swing'
+                                  ? 'bg-amber-50/60 border-amber-300 ring-1 ring-amber-200'
+                                  : 'bg-rose-50/40 border-rose-300 ring-1 ring-rose-200'
+                                : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/70'
+                            }`}
+                          >
+                            {/* Header Kartu: Ticker & Badge Kategori */}
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-extrabold text-sm text-slate-900">{pick.ticker}</span>
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${pick.tagColor}`}>
+                                    {pick.categoryLabel}
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-slate-400 truncate block mt-0.5">{pick.name}</span>
+                              </div>
+
+                              <div className="text-right shrink-0">
+                                <span className="font-mono font-extrabold text-xs text-slate-900 block">
+                                  {formatRupiah(pick.price)}
+                                </span>
+                                <span className={`inline-block font-mono text-[11px] font-bold ${
+                                  pick.changePercent >= 0 ? 'text-emerald-700' : 'text-rose-700'
+                                }`}>
+                                  {pick.changePercent >= 0 ? '+' : ''}{pick.changePercent.toFixed(1)}%
+                                </span>
+                              </div>
                             </div>
-                            <span className="text-[10px] text-slate-400 truncate block mt-0.5">{pick.name}</span>
-                          </div>
 
-                          <div className="text-right shrink-0">
-                            <span className="font-mono font-extrabold text-xs text-slate-900 block">
-                              {formatRupiah(pick.price)}
-                            </span>
-                            <span className={`inline-block font-mono text-[11px] font-bold ${
-                              pick.changePercent >= 0 ? 'text-emerald-700' : 'text-rose-700'
-                            }`}>
-                              {pick.changePercent >= 0 ? '+' : ''}{pick.changePercent.toFixed(1)}%
-                            </span>
-                          </div>
-                        </div>
+                            {/* Alasan Kenapa Menarik */}
+                            <div className="p-2 rounded-lg bg-slate-50 text-[11px] text-slate-700 leading-relaxed border border-slate-100 flex items-start gap-1.5">
+                              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                              <span>{pick.highlightReason}</span>
+                            </div>
 
-                        {/* Alasan Kenapa Menarik */}
-                        <div className="p-2 rounded-lg bg-slate-50 text-[11px] text-slate-700 leading-relaxed border border-slate-100 flex items-start gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-                          <span>{pick.highlightReason}</span>
-                        </div>
+                            {/* PERINGATAN IHSG (JIKA SAHAM NAIK TINGGI TAPI IHSG MERAH) */}
+                            {pick.ihsgWarning && (
+                              <div className="px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-[10px] text-amber-900 leading-snug flex items-center gap-1.5">
+                                <span>{pick.ihsgWarning}</span>
+                              </div>
+                            )}
 
-                        {/* Quick Stats: PER, PBV, MoS, Yield / Swing Indicators */}
-                        <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5 border-t border-slate-100">
-                          {tradeMode === 'swing' ? (
-                            <>
-                              <span>RSI: <strong className={pick.rsi && pick.rsi <= 38 ? 'text-emerald-700 font-bold' : 'text-slate-700'}>{pick.rsi || '-'}</strong></span>
-                              <span>•</span>
-                              <span>Vol Spike: <strong className={pick.volSpike && pick.volSpike >= 1.4 ? 'text-indigo-700 font-bold' : 'text-slate-700'}>{pick.volSpike ? `${pick.volSpike}x` : '1x'}</strong></span>
-                              <span>•</span>
-                              <span className="text-amber-800 font-bold">Upside Target: +{pick.swingPotential}%</span>
-                            </>
-                          ) : (
-                            <>
-                              <span>M.Cap: <strong className="text-slate-700">{pick.marketCapFormatted}</strong></span>
-                              <span>•</span>
-                              <span>PER: <strong className="text-slate-700">{pick.per ? `${pick.per}x` : '-'}</strong></span>
-                              <span>•</span>
-                              <span>PBV: <strong className="text-slate-700">{pick.pbv ? `${pick.pbv}x` : '-'}</strong></span>
-                              {pick.dividendYield && (
+                            {/* PANDUAN HARGA: SUPPORT, RESIST, HARGA IDEAL BELI & STOP LOSS (RISK LOSS) */}
+                            {(pick.support || pick.resistance || pick.idealBuyPrice || pick.stopLoss) && (
+                              <div className="space-y-1.5 p-2.5 rounded-lg bg-slate-50/90 border border-slate-200/80 text-[10px]">
+                                <div className="grid grid-cols-3 gap-1.5 pb-1.5 border-b border-slate-200/70">
+                                  <div className="space-y-0.5">
+                                    <span className="text-slate-400 block font-medium">Support:</span>
+                                    <span className="font-bold font-mono text-emerald-700 block">
+                                      {formatRupiah(pick.support)}
+                                    </span>
+                                  </div>
+                                  <div className="space-y-0.5 text-center border-x border-slate-200/80 px-1">
+                                    <span className="text-indigo-600 block font-bold">Ideal Beli:</span>
+                                    <span className="font-extrabold font-mono text-indigo-700 block bg-indigo-50/90 rounded py-0.2 border border-indigo-200/60">
+                                      {formatRupiah(pick.idealBuyPrice)}
+                                    </span>
+                                  </div>
+                                  <div className="space-y-0.5 text-right">
+                                    <span className="text-slate-400 block font-medium">Resist (TP):</span>
+                                    <span className="font-bold font-mono text-emerald-700 block">
+                                      {formatRupiah(pick.resistance)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* BARIS RISIKO: STOP LOSS & RISK LOSS */}
+                                <div className="flex items-center justify-between pt-0.5">
+                                  <div className="flex items-center gap-1 text-rose-700 font-semibold">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></span>
+                                    <span>Cut Loss (SL): <strong className="font-mono text-slate-900">{formatRupiah(pick.stopLoss)}</strong></span>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-slate-400">Toleransi Risiko:</span>
+                                    <span className="font-bold font-mono text-[9px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-800 border border-rose-200">
+                                      -{pick.riskPercent || 4}%
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Quick Stats: PER, PBV, MoS, Yield / Swing Indicators */}
+                            <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5 border-t border-slate-100">
+                              {tradeMode === 'swing' ? (
                                 <>
+                                  <span>RSI: <strong className={pick.rsi && pick.rsi <= 38 ? 'text-emerald-700 font-bold' : 'text-slate-700'}>{pick.rsi || '-'}</strong></span>
                                   <span>•</span>
-                                  <span className="text-emerald-700 font-bold">Yield {pick.dividendYield}%</span>
+                                  <span>Vol Spike: <strong className={pick.volSpike && pick.volSpike >= 1.4 ? 'text-indigo-700 font-bold' : 'text-slate-700'}>{pick.volSpike ? `${pick.volSpike}x` : '1x'}</strong></span>
+                                  <span>•</span>
+                                  <span className="text-amber-800 font-bold">Upside Target: +{pick.swingPotential}%</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>M.Cap: <strong className="text-slate-700">{pick.marketCapFormatted}</strong></span>
+                                  <span>•</span>
+                                  <span>PER: <strong className="text-slate-700">{pick.per ? `${pick.per}x` : '-'}</strong></span>
+                                  <span>•</span>
+                                  <span>PBV: <strong className="text-slate-700">{pick.pbv ? `${pick.pbv}x` : '-'}</strong></span>
+                                  {pick.dividendYield && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="text-emerald-700 font-bold">Yield {pick.dividendYield}%</span>
+                                    </>
+                                  )}
                                 </>
                               )}
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* PANEL KANAN 4: WATCHLIST SAHAM PANTAUAN (MONGODB READY) */}
-            {rightPanelTab === 'watchlist' && (
-              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700">
-                      <Star className="w-4 h-4 fill-amber-400" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Watchlist Saham</h3>
-                      <p className="text-xs text-slate-500">
-                        {watchlistStorage === 'mongodb' ? '🟢 Terhubung ke MongoDB' : '🟡 Mode Memori Lokal (Belum ada MONGODB_URI)'}
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={fetchWatchlist}
-                    disabled={watchlistLoading}
-                    className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition cursor-pointer"
-                    title="Refresh data watchlist"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${watchlistLoading ? 'animate-spin' : ''}`} />
-                  </button>
-                </div>
-
-                <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600 flex items-start gap-1.5">
-                  <Info className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-                  <span>
-                    Klik kartu saham untuk langsung membuka analisa valuasinya di panel kiri. Anda bisa menambahkan saham ke Watchlist dengan menekan tombol bintang ⭐ di kartu atas.
-                  </span>
-                </div>
-
-                {watchlistLoading ? (
-                  <div className="py-8 text-center text-xs text-slate-400 flex flex-col items-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin text-slate-500" />
-                    <span>Memuat watchlist...</span>
-                  </div>
-                ) : watchlist.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-slate-400 space-y-1">
-                    <Star className="w-8 h-8 mx-auto text-slate-300" />
-                    <p className="font-semibold text-slate-600">Belum ada saham di Watchlist</p>
-                    <p className="text-[11px]">Buka saham apa saja lalu klik tombol <strong>"Watchlist"</strong> di atas.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
-                    {watchlist.map((item) => (
-                      <div
-                        key={item.ticker}
-                        className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-3 ${
-                          stock?.ticker === item.ticker
-                            ? 'bg-amber-50/50 border-amber-300 ring-1 ring-amber-200'
-                            : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/70'
-                        }`}
-                      >
-                        <div
-                          onClick={() => {
-                            setTickerInput(item.ticker);
-                            fetchStock(item.ticker);
-                          }}
-                          className="space-y-1 cursor-pointer flex-1"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-xs text-slate-900 font-mono">{item.ticker}</span>
-                            <span className="text-[10px] text-slate-400 truncate max-w-[170px]">{item.name}</span>
+                            </div>
                           </div>
-                          <span className="text-[10px] text-slate-400 block">
-                            Disimpan: {formatDate(item.addedAt)}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setTickerInput(item.ticker);
-                              fetchStock(item.ticker);
-                            }}
-                            className="px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[11px] cursor-pointer"
-                          >
-                            Buka
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => toggleWatchlist(item.ticker, item.name)}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition cursor-pointer"
-                            title="Hapus dari watchlist"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
+
+                      {/* NAVIGASI PAGINATION HARIAN */}
+                      {totalDailyPages > 1 && (
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+                          <span className="text-[11px] font-medium text-slate-500">
+                            Hal <strong className="text-slate-800">{currentDailyPage}</strong> dari <strong className="text-slate-800">{totalDailyPages}</strong> ({dailyPicks.length} Rekomendasi)
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDailyPage((p) => Math.max(1, p - 1));
+                                dailyListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              disabled={currentDailyPage <= 1}
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-[11px] flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                              Prev
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDailyPage((p) => Math.min(totalDailyPages, p + 1));
+                                dailyListRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              disabled={currentDailyPage >= totalDailyPages}
+                              className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-[11px] flex items-center gap-0.5 cursor-pointer transition shadow-2xs"
+                            >
+                              Next
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
+
+
 
           </div>
 
