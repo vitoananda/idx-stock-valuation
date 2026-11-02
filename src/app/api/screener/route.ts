@@ -73,20 +73,21 @@ export async function GET(request: Request) {
 
     let targetTickers: { ticker: string; quote: any }[] = [];
 
-    if (mode === 'swing') {
-      // 1. Ambil data quote LIVE untuk SELURUH 955 emiten IDX
-      const allSymbols = (idxTickers as string[]).map((t) => `${t}.JK`);
-      const allQuotes = await yahooFinance.quote(allSymbols).catch(() => []);
+    // Ambil data quote LIVE untuk SELURUH 955 emiten IDX
+    const allSymbols = (idxTickers as string[]).map((t) => `${t}.JK`);
+    const allQuotes = await yahooFinance.quote(allSymbols).catch(() => []);
 
-      // 2. Filter: Hanya saham aktif transaksi (> 30.000 lembar), punya harga, dan EXCLUDE saham raksasa defensif
+    if (mode === 'swing') {
+      // Filter: Hanya saham aktif transaksi (> 30.000 lembar), punya harga, Market Cap >= MIN_MARKET_CAP, dan EXCLUDE saham raksasa defensif
       const activeSwings = allQuotes.filter((q: any) => {
         if (!q.regularMarketPrice || q.regularMarketPrice <= 0) return false;
+        if ((q.marketCap || 0) < MIN_MARKET_CAP) return false;
         if (DEFENSIVE_BIG_CAPS.has(q.symbol)) return false; // Exclude BBCA, BBRI, BMRI, BBNI, TLKM, ASII, dll
         if (!q.regularMarketVolume || q.regularMarketVolume < 30000) return false;
         return true;
       });
 
-      // 3. Urutkan berdasarkan momentum & likuiditas untuk mengambil kandidat teraktif (top 60)
+      // Urutkan berdasarkan momentum & likuiditas untuk mengambil kandidat teraktif (top 60)
       const topActive = activeSwings
         .sort((a: any, b: any) => {
           const volA = a.regularMarketVolume || 0;
@@ -103,9 +104,38 @@ export async function GET(request: Request) {
 
       targetTickers = topActive.map((q: any) => ({ ticker: q.symbol, quote: q }));
     } else {
-      // MODE INVESTASI: Fokus pada saham berfundamental solid
-      const investQuotes = await yahooFinance.quote(INVEST_TICKERS).catch(() => []);
-      targetTickers = investQuotes.map((q: any) => ({ ticker: q.symbol, quote: q }));
+      // MODE INVESTASI: Saring dari 955 emiten IDX yang memenuhi kriteria Market Cap & fundamental sehat
+      const investSet = new Set(INVEST_TICKERS);
+      
+      // 1. Saham dari daftar unggulan yang lolos filter Market Cap
+      const investMatches = allQuotes.filter(
+        (q: any) => investSet.has(q.symbol) && (q.marketCap || 0) >= MIN_MARKET_CAP && (q.regularMarketPrice || 0) > 0
+      );
+
+      // 2. Saham sehat lainnya dari seluruh IDX yang lolos filter Market Cap dan kriteria fundamental
+      const broadMatches = allQuotes.filter((q: any) => {
+        if (investSet.has(q.symbol)) return false;
+        if (!q.regularMarketPrice || q.regularMarketPrice < 50) return false;
+        if ((q.marketCap || 0) < MIN_MARKET_CAP) return false;
+        if (!q.regularMarketVolume || q.regularMarketVolume < 10000) return false;
+        if (!q.epsTrailingTwelveMonths || q.epsTrailingTwelveMonths <= 0) return false;
+        if (!q.trailingPE || q.trailingPE < 1.5 || q.trailingPE > 35) return false;
+        if (!q.priceToBook || q.priceToBook < 0.15 || q.priceToBook > 6) return false;
+        return true;
+      });
+
+      // Urutkan broad matches berdasarkan rasio valuasi awal (PE rendah, PBV rendah, Dividend yield)
+      broadMatches.sort((a: any, b: any) => {
+        const yieldA = a.trailingAnnualDividendYield || 0;
+        const yieldB = b.trailingAnnualDividendYield || 0;
+        const scoreA = (a.trailingPE || 15) * Math.sqrt(a.priceToBook || 1) / (1 + yieldA * 2);
+        const scoreB = (b.trailingPE || 15) * Math.sqrt(b.priceToBook || 1) / (1 + yieldB * 2);
+        return scoreA - scoreB;
+      });
+
+      // Gabungkan emiten unggulan + kandidat tersehat lainnya (maksimal 50 emiten untuk analisa valuasi mendalam)
+      const combined = [...investMatches, ...broadMatches.slice(0, Math.max(25, 50 - investMatches.length))];
+      targetTickers = combined.map((q: any) => ({ ticker: q.symbol, quote: q }));
     }
 
     // Ambil data quote dan chart historis secara paralel untuk semua emiten
@@ -115,9 +145,12 @@ export async function GET(request: Request) {
           const past90d = new Date();
           past90d.setDate(now.getDate() - 90);
 
+          // Untuk mode invest, chartDaily tidak diperlukan (hemat bandwidth & waktu)
           const [chartMonthly, chartDaily] = await Promise.all([
             yahooFinance.chart(ticker, { period1: past, interval: '1mo' }).catch(() => null),
-            yahooFinance.chart(ticker, { period1: past90d, interval: '1d' }).catch(() => null),
+            mode === 'swing'
+              ? yahooFinance.chart(ticker, { period1: past90d, interval: '1d' }).catch(() => null)
+              : Promise.resolve(null),
           ]);
 
           const price = quote.regularMarketPrice || quote.currentPrice;
@@ -371,8 +404,41 @@ export async function GET(request: Request) {
         return getSwingScore(b) - getSwingScore(a);
       });
     } else {
-      // Mode Invest: Urutkan dari yang paling undervalued (Margin of Safety tertinggi) ke bawah
-      stocks.sort((a, b) => b.marginOfSafety - a.marginOfSafety);
+      // Mode Invest: Urutkan dengan Formula Komposit Investasi Unggul
+      // Menggabungkan:
+      // 1. Margin of Safety (MoS) - Bobot Utama (50%)
+      // 2. Diskon PBV terhadap nilai buku wajar (25%)
+      // 3. Imbal Hasil Dividen (Dividend Yield Bonus) (15%)
+      // 4. Kesehatan PER (Reward untuk PER murah yang realistis 3x-18x) (10%)
+      stocks.sort((a, b) => {
+        const getInvestScore = (s: ScreenerStock) => {
+          // 1. Margin of Safety (0 - 100)
+          const mosPart = Math.min(100, Math.max(-50, s.marginOfSafety)) * 0.50;
+          
+          // 2. Diskon PBV: saham dengan PBV di bawah 1.0 atau rendah mendapat skor ekstra
+          const pbv = s.pbv || 2.0;
+          let pbvScore = 0;
+          if (pbv > 0 && pbv <= 0.5) pbvScore = 25; // Diskon ekstrim di bawah nilai buku
+          else if (pbv <= 1.0) pbvScore = 18;
+          else if (pbv <= 2.0) pbvScore = 10;
+          else if (pbv <= 3.5) pbvScore = 5;
+
+          // 3. Dividend Yield: imbal hasil kas riil kepada pemegang saham
+          const divYield = s.dividendYield || 0;
+          const divScore = Math.min(15, divYield * 2.0); // Misal yield 7.5% dapat poin penuh 15
+
+          // 4. Rasio PER Sehat: emiten dengan laba solid (PER 3 - 15) mendapat poin stabilitas
+          const per = s.per;
+          let peScore = 0;
+          if (per && per >= 2.0 && per <= 12.0) peScore = 10;
+          else if (per && per <= 18.0) peScore = 6;
+          else if (per && per <= 25.0) peScore = 2;
+
+          return mosPart + pbvScore + divScore + peScore;
+        };
+
+        return getInvestScore(b) - getInvestScore(a);
+      });
     }
 
     const minCapDisplay = MIN_MARKET_CAP >= 1_000_000_000_000

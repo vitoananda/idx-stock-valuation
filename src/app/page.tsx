@@ -2822,7 +2822,7 @@ export default function Home() {
                       </>
                     ) : (
                       <>
-                        🌿 <strong>Mode Investasi Aktif:</strong> Diurutkan dari yang memiliki diskon valuasi fundamental (Margin of Safety) tertinggi.
+                        🌿 <strong>Mode Investasi Aktif:</strong> Diurutkan berdasarkan Skor Komposit Nilai (Margin of Safety, Diskon PBV di bawah nilai buku, Imbal Hasil Dividen, & Stabilitas PER).
                       </>
                     )}
                   </span>
