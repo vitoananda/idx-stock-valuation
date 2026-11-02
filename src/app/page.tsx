@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { StockPriceChart } from '@/components/StockPriceChart';
 import { Search, Info, ArrowUpRight, ArrowDownRight, RefreshCw, AlertCircle, CheckCircle2, AlertTriangle, Coins, Calendar, Calculator, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Wallet, BookOpen, Target, Layers, X, Compass, DollarSign, ShieldAlert, Award, TrendingUp, Filter, Activity, Sparkles, TrendingDown, Flame, Zap, Loader2, Star } from 'lucide-react';
 
 interface MetricBand {
@@ -105,6 +106,7 @@ interface StockData {
   dividend: DividendData;
   health?: FinancialHealth;
   technicals?: TechnicalIndicators;
+  chartHistory?: { date: string; close: number; volume: number }[];
   per: MetricBand;
   pbv: MetricBand;
 }
@@ -1062,6 +1064,17 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+
+                {/* GRAFIK PERGERAKAN HARGA SAHAM (LINE CHART) */}
+                <StockPriceChart
+                  ticker={stock.ticker}
+                  currentPrice={stock.price}
+                  fairPrice={evalResult.fairPrice}
+                  support={stock.technicals?.support}
+                  resistance={stock.technicals?.resistance}
+                  ma20={stock.technicals?.ma20}
+                  data={stock.chartHistory || []}
+                />
 
                 {/* BLOCK / TAB RUMUS PERHITUNGAN HARGA WAJAR */}
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden transition-all">

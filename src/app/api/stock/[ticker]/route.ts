@@ -123,11 +123,12 @@ export async function GET(
       console.warn(`Chart data query error for ${ticker}`);
     }
 
-    // Ambil data teknikal harian 120 hari terakhir untuk Swing Trading (RSI, MA20, MA50, Vol Spike, Support, Resistance)
+    // Ambil data teknikal harian 1 tahun terakhir untuk Swing Trading dan Line Chart
     let technicals: any = null;
+    let chartHistory: { date: string; close: number; volume: number }[] = [];
     try {
       const dailyStart = new Date();
-      dailyStart.setDate(endDate.getDate() - 130);
+      dailyStart.setDate(endDate.getDate() - 365);
       const dailyData = await yahooFinance.chart(ticker, {
         period1: dailyStart.toISOString().split('T')[0],
         period2: endDate.toISOString().split('T')[0],
@@ -136,6 +137,11 @@ export async function GET(
 
       if (dailyData && dailyData.quotes && dailyData.quotes.length >= 15) {
         const validQuotes = dailyData.quotes.filter((q: any) => q.close !== null && q.close !== undefined && q.close > 0);
+        chartHistory = validQuotes.map((q: any) => ({
+          date: new Date(q.date).toISOString().split('T')[0],
+          close: Math.round(q.close),
+          volume: q.volume || 0,
+        }));
         const closes = validQuotes.map((q: any) => q.close);
 
         // MA5, MA10, MA20, MA50
@@ -390,6 +396,7 @@ export async function GET(
       },
       health: financialHealth,
       technicals,
+      chartHistory,
       per: {
         current: trailingPE ? Math.round(trailingPE * 10) / 10 : null,
         minus1SD: Math.max(0.1, Math.round((perMean - perStd) * 10) / 10),
