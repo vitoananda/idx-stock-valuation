@@ -642,100 +642,242 @@ export default function Home() {
   const simAvgResult = calculateSimulatedAvg();
   const strategyResult = calculateBuyStrategy();
 
-  // Hitung Skor & Rating Saham Menyeluruh (Overall Stock Rating: 1 - 5 Bintang / 0 - 100 Skor)
+  // Hitung Skor & Rating Saham Menyeluruh (Overall Stock Rating: 1 - 5 Bintang / 0 - 100 Skor Murni Tanpa Base 50)
   const calculateOverallRating = () => {
     if (!stock) return null;
 
-    let score = 50; // Skor baseline
+    let score = 0; // Murni mulai dari 0 tanpa angka siluman / base 50
+    const breakdown: { category: string; item: string; points: number; note: string }[] = [];
 
     if (tradeMode === 'swing') {
-      // MODE SWING / TRADING (Fokus: Momentum, Sinyal Rebound, MA5/10/20, Volume)
-      // 1. Susunan MA (Maks +25)
-      if (stock.technicals?.isBullishAlignment) score += 25;
-      else if (stock.technicals?.isGoldenCross) score += 18;
-      else if (stock.technicals?.ma5 && stock.price >= stock.technicals.ma5) score += 10;
-      else if (stock.technicals?.ma20 && stock.price < stock.technicals.ma20) score -= 15;
-
-      // 2. Volume Spike (Maks +20)
-      if (stock.technicals?.volSpike && stock.technicals.volSpike >= 1.5) score += 20;
-      else if (stock.technicals?.volSpike && stock.technicals.volSpike >= 1.2) score += 10;
-      else if (stock.technicals?.volSpike && stock.technicals.volSpike < 0.6) score -= 5;
-
-      // 3. RSI Zone (Maks +15)
-      if (stock.technicals?.rsi) {
-        if (stock.technicals.rsi <= 35) score += 18; // Oversold rebound sweet spot
-        else if (stock.technicals.rsi >= 45 && stock.technicals.rsi <= 65) score += 12; // Healthy momentum
-        else if (stock.technicals.rsi >= 75) score -= 15; // Dangerously overbought
+      // MODE SWING / TRADING (Maksimal 100 Poin Murni)
+      // 1. Susunan MA (Bobot Maks: 30 poin)
+      if (stock.technicals?.isBullishAlignment) {
+        score += 30;
+        breakdown.push({ category: 'Tren MA', item: 'Bullish Tangga (P > MA5 > 10 > 20)', points: 30, note: 'Formasi uptrend sempurna' });
+      } else if (stock.technicals?.isGoldenCross) {
+        score += 22;
+        breakdown.push({ category: 'Tren MA', item: 'Golden Cross (MA5 > MA10)', points: 22, note: 'Sinyal awal akselerasi kenaikan' });
+      } else if (stock.technicals?.ma5 && stock.price >= stock.technicals.ma5) {
+        score += 15;
+        breakdown.push({ category: 'Tren MA', item: 'Harga Bertahan di Atas MA5', points: 15, note: 'Menjaga momentum mingguan' });
+      } else if (stock.technicals?.ma20 && stock.price >= stock.technicals.ma20) {
+        score += 8;
+        breakdown.push({ category: 'Tren MA', item: 'Harga di Atas MA20 Bulanan', points: 8, note: 'Di atas batas tren menengah' });
+      } else {
+        breakdown.push({ category: 'Tren MA', item: 'Downtrend di Bawah MA20', points: 0, note: 'Tren jangka pendek masih tertekan' });
       }
 
-      // 4. Kenaikan hari ini (+/- 10)
-      if (stock.changePercent > 0) score += Math.min(Math.round(stock.changePercent * 2), 10);
-      else if (stock.changePercent < -3) score -= 8;
+      // 2. Volume Spike / Minat Pasar (Bobot Maks: 25 poin)
+      if (stock.technicals?.volSpike && stock.technicals.volSpike >= 2.0) {
+        score += 25;
+        breakdown.push({ category: 'Volume Transaksi', item: `Volume Spike Jumbo (${stock.technicals.volSpike}x)`, points: 25, note: 'Akumulasi transaksi masif dari rata-rata' });
+      } else if (stock.technicals?.volSpike && stock.technicals.volSpike >= 1.5) {
+        score += 20;
+        breakdown.push({ category: 'Volume Transaksi', item: `Volume Breakout (${stock.technicals.volSpike}x)`, points: 20, note: 'Terjadi lonjakan volume signifikan' });
+      } else if (stock.technicals?.volSpike && stock.technicals.volSpike >= 1.1) {
+        score += 12;
+        breakdown.push({ category: 'Volume Transaksi', item: `Volume Ramai (${stock.technicals.volSpike}x)`, points: 12, note: 'Aktivitas transaksi cukup hidup' });
+      } else {
+        breakdown.push({ category: 'Volume Transaksi', item: 'Volume Normal / Kering', points: 3, note: 'Minim dorongan minat beli baru' });
+      }
+
+      // 3. Momentum RSI (Bobot Maks: 25 poin)
+      if (stock.technicals?.rsi) {
+        if (stock.technicals.rsi <= 35) {
+          score += 25;
+          breakdown.push({ category: 'Indikator RSI', item: `RSI Oversold (${stock.technicals.rsi})`, points: 25, note: 'Jenuh jual, potensi pantulan teknikal tinggi' });
+        } else if (stock.technicals.rsi >= 45 && stock.technicals.rsi <= 65) {
+          score += 18;
+          breakdown.push({ category: 'Indikator RSI', item: `RSI Sehat (${stock.technicals.rsi})`, points: 18, note: 'Momentum ekspansi stabil belum overbought' });
+        } else if (stock.technicals.rsi < 45 && stock.technicals.rsi > 35) {
+          score += 10;
+          breakdown.push({ category: 'Indikator RSI', item: `RSI Lemah (${stock.technicals.rsi})`, points: 10, note: 'Tekanan jual masih terasa' });
+        } else if (stock.technicals.rsi >= 75) {
+          score -= 10;
+          breakdown.push({ category: 'Indikator RSI', item: `RSI Sangat Panas (${stock.technicals.rsi})`, points: -10, note: 'Rawan profit taking sewaktu-waktu' });
+        }
+      }
+
+      // 4. Kenaikan Harga & Sentimen Hari Ini (Bobot Maks: 20 poin - Anti-FOMO)
+      if (stock.changePercent > 10.0) {
+        score += 2;
+        breakdown.push({ 
+          category: 'Kenaikan Harian', 
+          item: `Overheat / Rawan Guyur (+${stock.changePercent.toFixed(1)}%)`, 
+          points: 2, 
+          note: 'Sudah terbang tinggi (> +10%), risiko FOMO & terbanting profit taking sangat besar!' 
+        });
+      } else if (stock.changePercent >= 2.0 && stock.changePercent <= 7.5) {
+        score += 20;
+        breakdown.push({ 
+          category: 'Kenaikan Harian', 
+          item: `Breakout Manis (+${stock.changePercent.toFixed(1)}%)`, 
+          points: 20, 
+          note: 'Momentum ideal di awal kenaikan, belum terlalu jauh dari harga pembukaan' 
+        });
+      } else if (stock.changePercent > 7.5 && stock.changePercent <= 10.0) {
+        score += 12;
+        breakdown.push({ 
+          category: 'Kenaikan Harian', 
+          item: `Rally Lanjutan (+${stock.changePercent.toFixed(1)}%)`, 
+          points: 12, 
+          note: 'Kenaikan mulai tinggi, wajib pasang trailing/stop loss ketat' 
+        });
+      } else if (stock.changePercent > 0) {
+        score += 10;
+        breakdown.push({ 
+          category: 'Kenaikan Harian', 
+          item: `Naik Positif (+${stock.changePercent.toFixed(1)}%)`, 
+          points: 10, 
+          note: 'Sentimen pasar hari ini hijau dan aman dari overheat' 
+        });
+      } else if (stock.changePercent === 0) {
+        score += 4;
+        breakdown.push({ category: 'Kenaikan Harian', item: 'Harga Sideways (0.0%)', points: 4, note: 'Konsolidasi tanpa perubahan signifikan' });
+      } else if (stock.changePercent < -3) {
+        score -= 8;
+        breakdown.push({ category: 'Kenaikan Harian', item: `Koreksi Tajam (${stock.changePercent.toFixed(1)}%)`, points: -8, note: 'Tekanan jual harian cukup deras' });
+      }
     } else {
-      // MODE INVESTASI (Fokus: Valuasi Margin of Safety, Dividen, Kesehatan Finansial ROE & DER)
-      // 1. Margin of Safety (Maks +30)
+      // MODE INVESTASI FUNDAMENTAL (Maksimal 100 Poin Murni Blak-blakan)
+      // 1. Margin of Safety / Diskon Harga Wajar (Bobot Maks: 30 poin)
       const mos = evalResult?.marginOfSafety ?? 0;
-      if (mos >= 25) score += 30;
-      else if (mos >= 15) score += 20;
-      else if (mos >= 0) score += 10;
-      else if (mos < -15) score -= 20;
-      else score -= 10;
+      if (mos >= 30) {
+        score += 30;
+        breakdown.push({ category: 'Diskon Valuasi (MoS)', item: `Diskon Jumbo (+${mos.toFixed(1)}%)`, points: 30, note: 'Harga jauh di bawah rata-rata wajar 5 tahun' });
+      } else if (mos >= 15) {
+        score += 22;
+        breakdown.push({ category: 'Diskon Valuasi (MoS)', item: `Diskon Bagus (+${mos.toFixed(1)}%)`, points: 22, note: 'Memiliki bantalan risiko diskon yang menarik' });
+      } else if (mos >= 0) {
+        score += 12;
+        breakdown.push({ category: 'Diskon Valuasi (MoS)', item: `Harga Wajar (+${mos.toFixed(1)}%)`, points: 12, note: 'Valuasi sejalan dengan historis normal' });
+      } else if (mos < -25) {
+        score -= 20;
+        breakdown.push({ category: 'Diskon Valuasi (MoS)', item: `Sangat Overvalued (${mos.toFixed(1)}%)`, points: -20, note: 'Harga terlalu tinggi di atas batas wajar' });
+      } else if (mos < -10) {
+        score -= 10;
+        breakdown.push({ category: 'Diskon Valuasi (MoS)', item: `Kemahalan (${mos.toFixed(1)}%)`, points: -10, note: 'Minim ruang diskon fundamental' });
+      } else {
+        score += 4;
+        breakdown.push({ category: 'Diskon Valuasi (MoS)', item: `Sedikit Premium (${mos.toFixed(1)}%)`, points: 4, note: 'Mendekati batas atas harga wajar' });
+      }
 
-      // 2. Dividen Yield (Maks +15)
+      // 2. Diskon & Kewajaran Nilai Buku PBV (Bobot Maks: 20 poin)
+      const currentPBV = stock.pbv.current;
+      if (currentPBV !== null && currentPBV > 0) {
+        if (currentPBV <= 0.6) {
+          score += 20;
+          breakdown.push({ category: 'Rasio Nilai Buku (PBV)', item: `PBV Sangat Murah (${currentPBV.toFixed(2)}x)`, points: 20, note: 'Diskon besar di bawah total modal/aset bersih' });
+        } else if (currentPBV <= 1.0) {
+          score += 16;
+          breakdown.push({ category: 'Rasio Nilai Buku (PBV)', item: `PBV di Bawah Nilai Buku (${currentPBV.toFixed(2)}x)`, points: 16, note: 'Harga lebih murah dari modal ekuitas per lembar' });
+        } else if (currentPBV <= 1.8) {
+          score += 10;
+          breakdown.push({ category: 'Rasio Nilai Buku (PBV)', item: `PBV Wajar Sehat (${currentPBV.toFixed(2)}x)`, points: 10, note: 'Valuasi aset masuk akal untuk emiten sehat' });
+        } else if (currentPBV <= 3.5) {
+          score += 4;
+          breakdown.push({ category: 'Rasio Nilai Buku (PBV)', item: `PBV Moderat (${currentPBV.toFixed(2)}x)`, points: 4, note: 'Premi nilai buku tergolong standar industri' });
+        } else if (currentPBV > 8.0) {
+          score -= 15;
+          breakdown.push({ category: 'Rasio Nilai Buku (PBV)', item: `PBV Sangat Mahal (${currentPBV.toFixed(2)}x)`, points: -15, note: 'Premi aset ekstrim, risiko koreksi jika laba melambat' });
+        } else if (currentPBV > 4.5) {
+          score -= 8;
+          breakdown.push({ category: 'Rasio Nilai Buku (PBV)', item: `PBV Cenderung Tinggi (${currentPBV.toFixed(2)}x)`, points: -8, note: 'Harga jauh di atas nilai buku riil perusahaan' });
+        }
+      }
+
+      // 3. Imbal Hasil Dividen Riil (Bobot Maks: 20 poin)
       const y = stock.dividend.yieldPercent ?? 0;
-      if (y >= 6.0) score += 15;
-      else if (y >= 3.5) score += 10;
-      else if (y > 0) score += 5;
+      if (y >= 7.0) {
+        score += 20;
+        breakdown.push({ category: 'Dividen Kas', item: `Yield Sangat Tinggi (${y.toFixed(1)}%)`, points: 20, note: 'Imbal hasil kas luar biasa, melampaui obligasi/deposito' });
+      } else if (y >= 4.5) {
+        score += 15;
+        breakdown.push({ category: 'Dividen Kas', item: `Yield Menarik (${y.toFixed(1)}%)`, points: 15, note: 'Arus kas dividen tahunan sehat dan kompetitif' });
+      } else if (y >= 2.0) {
+        score += 8;
+        breakdown.push({ category: 'Dividen Kas', item: `Dividen Rutin (${y.toFixed(1)}%)`, points: 8, note: 'Rutin membagikan dividen tunai kepada investor' });
+      } else {
+        breakdown.push({ category: 'Dividen Kas', item: 'Dividen Kecil / Nihil (0%)', points: 0, note: 'Tidak membagikan dividen signifikan tahun ini' });
+      }
 
-      // 3. ROE Profitabilitas (Maks +15)
+      // 4. Kualitas Laba & Efisiensi ROE (Bobot Maks: 15 poin)
       const roe = stock.health?.roe ?? 0;
-      if (roe >= 18) score += 15;
-      else if (roe >= 12) score += 10;
-      else if (roe < 4) score -= 10;
+      if (roe >= 18) {
+        score += 15;
+        breakdown.push({ category: 'Efisiensi Modal (ROE)', item: `ROE Prima (${roe}%)`, points: 15, note: 'Pencetak laba unggul atas modal sendiri' });
+      } else if (roe >= 10) {
+        score += 10;
+        breakdown.push({ category: 'Efisiensi Modal (ROE)', item: `ROE Sehat (${roe}%)`, points: 10, note: 'Tingkat pengembalian laba cukup solid' });
+      } else if (roe >= 4) {
+        score += 4;
+        breakdown.push({ category: 'Efisiensi Modal (ROE)', item: `ROE Rendah (${roe}%)`, points: 4, note: 'Efisiensi laba modal tergolong minim' });
+      } else {
+        score -= 8;
+        breakdown.push({ category: 'Efisiensi Modal (ROE)', item: `Laba Anjlok / Merugi (${roe}%)`, points: -8, note: 'Kinerja laba operasional memburuk' });
+      }
 
-      // 4. DER / Utang
+      // 5. Kesehatan Neraca & Utang DER (Bobot Maks: 15 poin)
       const der = stock.health?.der ?? 0;
-      if (!stock.health?.isBank && der > 2.0) score -= 10;
-      else if (!stock.health?.isBank && der <= 0.8) score += 10;
+      if (stock.health?.isBank) {
+        score += 12;
+        breakdown.push({ category: 'Stabilitas Utang (DER)', item: 'Sektor Perbankan (Aman)', points: 12, note: 'Leverage dana pihak ketiga mengikuti regulasi OJK' });
+      } else if (der !== null && der <= 0.6) {
+        score += 15;
+        breakdown.push({ category: 'Stabilitas Utang (DER)', item: `Utang Sangat Rendah (${der}x)`, points: 15, note: 'Neraca sangat sehat dan aman dari risiko suku bunga' });
+      } else if (der !== null && der <= 1.2) {
+        score += 10;
+        breakdown.push({ category: 'Stabilitas Utang (DER)', item: `Utang Terkendali (${der}x)`, points: 10, note: 'Rasio utang terhadap modal dalam batas wajar' });
+      } else if (der !== null && der <= 2.0) {
+        score += 4;
+        breakdown.push({ category: 'Stabilitas Utang (DER)', item: `Utang Moderat (${der}x)`, points: 4, note: 'Beban liabilitas mulai perlu diperhatikan' });
+      } else if (der !== null && der > 2.0) {
+        score -= 10;
+        breakdown.push({ category: 'Stabilitas Utang (DER)', item: `Utang Terlalu Tinggi (${der}x)`, points: -10, note: 'Beban bunga utang berisiko menekan laba bersih' });
+      }
     }
 
-    // Normalisasi skor ke rentang 10 s/d 99
-    score = Math.max(15, Math.min(98, score));
+    // Skor murni di-clamp pada batas realistis 0 s/d 100
+    const rawTotalScore = score;
+    score = Math.max(0, Math.min(100, score));
 
-    // Konversi ke 5 skala bintang
-    let stars = 3.0;
-    let label = 'Netral (Hold / Wait)';
-    let badgeColor = 'bg-slate-100 text-slate-800 border-slate-300';
+    // Konversi ke 5 skala bintang secara objektif (skala 20 poin per bintang)
+    let stars = 1.0;
+    let label = 'Kurang Layak / Risiko Tinggi';
+    let badgeColor = 'bg-rose-50 text-rose-800 border-rose-200';
     let starColor = 'text-amber-400 fill-amber-400';
 
-    if (score >= 82) {
+    if (score >= 80) {
       stars = 5.0;
       label = tradeMode === 'swing' ? 'Strong Buy (Sinyal Super Kuat)' : 'Sangat Layak Beli (Diskon Jumbo)';
       badgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-300 ring-1 ring-emerald-200';
-    } else if (score >= 70) {
+    } else if (score >= 65) {
       stars = 4.0;
-      label = tradeMode === 'swing' ? 'Buy on Breakout / Rebound' : 'Layak Koleksi (Akumulasi)';
+      label = tradeMode === 'swing' ? 'Buy on Breakout / Rebound' : 'Layak Koleksi (Kualitas Bagus)';
       badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
-    } else if (score >= 52) {
+    } else if (score >= 45) {
       stars = 3.0;
       label = tradeMode === 'swing' ? 'Wait & See (Tunggu Konfirmasi)' : 'Wajar (Cicil DCA Santai)';
       badgeColor = 'bg-amber-50 text-amber-800 border-amber-200';
-    } else if (score >= 38) {
+    } else if (score >= 25) {
       stars = 2.0;
-      label = tradeMode === 'swing' ? 'Kurang Ideal (Rawan Koreksi)' : 'Cenderung Mahal / Pantau';
+      label = tradeMode === 'swing' ? 'Kurang Ideal (Rawan Koreksi)' : 'Cenderung Mahal / Kurang Menarik';
       badgeColor = 'bg-orange-50 text-orange-800 border-orange-200';
     } else {
       stars = 1.0;
-      label = tradeMode === 'swing' ? 'Hindari (Downtrend / Overbought)' : 'Kurang Layak (Overvalued)';
+      label = tradeMode === 'swing' ? 'Hindari (Downtrend / Overbought)' : 'Kurang Layak (Overvalued / Berisiko)';
       badgeColor = 'bg-rose-50 text-rose-800 border-rose-200';
     }
 
     return {
       score,
+      rawTotalScore,
       stars,
       label,
       badgeColor,
       starColor,
+      breakdown,
     };
   };
 
@@ -998,31 +1140,86 @@ export default function Home() {
 
                       {/* OVERALL STOCK RATING BADGE */}
                       {overallRating && (
-                        <div
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition shadow-2xs ${overallRating.badgeColor}`}
-                          title={`Rating Menyeluruh (${tradeMode === 'swing' ? 'Swing Trade' : 'Investasi'}): Skor ${overallRating.score}/100 - ${overallRating.label}`}
-                        >
-                          <div className="flex items-center gap-0.5">
-                            {[1, 2, 3, 4, 5].map((s) => (
-                              <Star
-                                key={s}
-                                className={`w-3 h-3 ${
-                                  s <= overallRating.stars
-                                    ? 'text-amber-500 fill-amber-400'
-                                    : 'text-slate-300'
-                                }`}
-                              />
-                            ))}
+                        <div className="flex items-center gap-2">
+                          <div
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold transition shadow-2xs ${overallRating.badgeColor}`}
+                          >
+                            <div className="flex items-center gap-0.5">
+                              {[1, 2, 3, 4, 5].map((s) => (
+                                <Star
+                                  key={s}
+                                  className={`w-3.5 h-3.5 ${
+                                    s <= overallRating.stars
+                                      ? 'text-amber-500 fill-amber-400'
+                                      : 'text-slate-300'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                            <span className="font-mono text-xs font-extrabold">
+                              {overallRating.score}/100 Poin
+                            </span>
+                            <span className="text-[10px] font-semibold opacity-90 hidden sm:inline">
+                              • {overallRating.label}
+                            </span>
                           </div>
-                          <span className="font-mono text-[11px] font-extrabold">
-                            {overallRating.score}
-                          </span>
-                          <span className="text-[10px] font-normal opacity-80 hidden sm:inline">
-                            • {overallRating.label}
-                          </span>
                         </div>
                       )}
                     </div>
+
+                    {/* BEDAH DIAGNOSA POIN BINTANG (SELALU DITAMPILKAN TRANSPARAN & BLAK-BLAKAN) */}
+                    {overallRating && (
+                      <div className="mt-2.5 p-3.5 rounded-xl bg-slate-50/90 border border-slate-200 text-xs space-y-2.5">
+                        <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm">⚖️</span>
+                            <span className="font-bold text-slate-900">
+                              Rincian Diagnosa Poin ({overallRating.stars} Bintang / {overallRating.score} Poin)
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-semibold text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                            {tradeMode === 'swing' ? 'Parameter Swing Momentum' : 'Parameter Fundamental Riil'}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          {overallRating.breakdown.map((b, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-200/80 text-[11px] gap-2"
+                            >
+                              <div className="space-y-0.5 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-semibold text-slate-500 text-[10px] uppercase tracking-wide">
+                                    [{b.category}]
+                                  </span>
+                                  <strong className="text-slate-800">{b.item}</strong>
+                                </div>
+                                <span className="text-[10px] text-slate-400 block truncate">{b.note}</span>
+                              </div>
+                              <span
+                                className={`font-mono font-bold text-xs px-2 py-0.5 rounded border shrink-0 ${
+                                  b.points > 0
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : b.points < 0
+                                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                    : 'bg-slate-100 text-slate-500 border-slate-200'
+                                }`}
+                              >
+                                {b.points > 0 ? `+${b.points}` : b.points} poin
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-[11px] font-semibold text-slate-700">
+                          <span>Total Akumulasi Skor Akhir:</span>
+                          <span className="font-mono text-xs font-extrabold text-slate-900">
+                            {overallRating.breakdown.map((b, i) => `${i === 0 ? '' : b.points >= 0 ? '+ ' : ''}${b.points}`).join(' ')} = <span className="text-indigo-700 underline font-bold">{overallRating.score} / 100 Poin</span>
+                          </span>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="pt-2 text-xs text-slate-700 space-y-1 bg-white/70 p-3 rounded-lg border border-slate-200/80">
                       <p className="font-medium text-slate-900">{evalResult.explanation}</p>
@@ -3055,7 +3252,7 @@ export default function Home() {
                   <span>
                     {tradeMode === 'swing' ? (
                       <>
-                        ⚡ <strong>Pilihan Cuan Cepat Swing Trade:</strong> Memindai saham IDX dengan <strong>Volume Breakout</strong> (lonjakan transaksi), <strong>Oversold Rebound</strong> (pantulan RSI), dan <strong>Momentum Uptrend</strong> di atas MA20.
+                        ⚡ <strong>Pilihan Cuan Cepat Swing Trade:</strong> Memindai saham IDX dengan <strong>Volume Breakout</strong> (lonjakan transaksi), <strong>Oversold Rebound</strong> (pantulan RSI), dan <strong>Momentum Uptrend Awal</strong> di atas MA20. Dilengkapi <strong>Filter Anti-FOMO</strong> (mengecualikan saham yang sudah terbang tinggi &gt;7.5% agar terhindar dari risiko terbanting/guyuran).
                       </>
                     ) : (
                       <>

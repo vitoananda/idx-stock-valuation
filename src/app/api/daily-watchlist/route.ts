@@ -69,7 +69,7 @@ export async function GET(request: Request) {
     const fxQuote = await yahooFinance.quote('USDIDR=X').catch(() => null);
     const usdIdrRate = fxQuote?.regularMarketPrice || 16200;
 
-    // Ambil data pergerakan IHSG (^JKSE) secara realtime
+    // Ambil data pergerakan IHSG (^JKSE) secara realtime & akurat
     let ihsgData: IhsgData = {
       price: 0,
       changePercent: 0,
@@ -79,39 +79,38 @@ export async function GET(request: Request) {
     };
 
     try {
-      const ihsgRes = await fetch('https://query2.finance.yahoo.com/v8/finance/chart/%5EJKSE', {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
-        cache: 'no-store',
-      });
-      if (ihsgRes.ok) {
-        const ihsgJson = await ihsgRes.json();
-        const meta = ihsgJson?.chart?.result?.[0]?.meta;
-        if (meta?.regularMarketPrice) {
-          const cur = meta.regularMarketPrice;
-          const prev = meta.chartPreviousClose || cur;
-          const pct = Math.round(((cur - prev) / prev) * 1000) / 10;
-          let status: 'bullish' | 'sideways' | 'bearish' = 'sideways';
-          let label = 'Pasar Konsolidasi';
-          let advice = 'Pilih saham dengan volume spike kuat.';
-
-          if (pct <= -0.4) {
-            status = 'bearish';
-            label = 'Pasar Melemah (Tekanan Jual)';
-            advice = 'IHSG merah! Saham yang melesat rawan profit taking / tarik turun. Jangan kejar harga tinggi, prioritaskan kunci profit.';
-          } else if (pct >= 0.3) {
-            status = 'bullish';
-            label = 'Pasar Kuat (Risk-On)';
-            advice = 'IHSG hijau kondusif. Saham breakout berpotensi rally lanjutan.';
-          }
-
-          ihsgData = {
-            price: Math.round(cur),
-            changePercent: pct,
-            status,
-            label,
-            advice,
-          };
+      const ihsgQuote = await yahooFinance.quote('^JKSE').catch(() => null);
+      if (ihsgQuote && ihsgQuote.regularMarketPrice) {
+        const cur = ihsgQuote.regularMarketPrice;
+        let pct = 0;
+        if (ihsgQuote.regularMarketChangePercent !== undefined && ihsgQuote.regularMarketChangePercent !== null) {
+          pct = Math.round(ihsgQuote.regularMarketChangePercent * 100) / 100;
+        } else if (ihsgQuote.regularMarketChange !== undefined && ihsgQuote.regularMarketPrice) {
+          const prev = ihsgQuote.regularMarketPrice - ihsgQuote.regularMarketChange;
+          pct = prev > 0 ? Math.round(((ihsgQuote.regularMarketChange) / prev) * 10000) / 100 : 0;
         }
+
+        let status: 'bullish' | 'sideways' | 'bearish' = 'sideways';
+        let label = 'Pasar Konsolidasi';
+        let advice = 'Pilih saham dengan volume spike kuat.';
+
+        if (pct <= -0.4) {
+          status = 'bearish';
+          label = 'Pasar Melemah (Tekanan Jual)';
+          advice = 'IHSG merah! Saham yang melesat rawan profit taking / tarik turun. Jangan kejar harga tinggi, prioritaskan kunci profit.';
+        } else if (pct >= 0.3) {
+          status = 'bullish';
+          label = 'Pasar Kuat (Risk-On)';
+          advice = 'IHSG hijau kondusif. Saham breakout berpotensi rally lanjutan.';
+        }
+
+        ihsgData = {
+          price: Math.round(cur),
+          changePercent: pct,
+          status,
+          label,
+          advice,
+        };
       }
     } catch (e) {
       console.warn('Gagal memuat quote IHSG:', e);
@@ -130,15 +129,29 @@ export async function GET(request: Request) {
       const allSymbols = (idxTickers as string[]).map((t) => `${t}.JK`);
       const allQuotes = await yahooFinance.quote(allSymbols).catch(() => []);
 
-      // 2. Filter: Hanya saham aktif transaksi (> 50.000 lembar), punya harga, dan EXCLUDE saham raksasa defensif
+      // 2. Filter Anti-Saham Tidur, Anti-Penny Trap, & Anti-FOMO:
+      // - Harga minimal Rp 50 (menghindari saham gocap / FCA / jebakan Rp 1 - 25 seperti MKNT)
+      // - Volume minimal 100.000 lembar & Nilai Transaksi harian minimal Rp 500 Juta agar likuid dan aman diexit
+      // - Exclude saham raksasa defensif lambat
+      // - Anti-FOMO & Anti-Guyuran: Exclude saham yang sudah terbang terlalu tinggi (> +7.5%) hari ini
       const activeSwings = allQuotes.filter((q: any) => {
-        if (!q.regularMarketPrice || q.regularMarketPrice <= 0) return false;
+        const price = q.regularMarketPrice || 0;
+        const volume = q.regularMarketVolume || 0;
+        const turnover = price * volume;
+        const changePercent = q.regularMarketChangePercent || 0;
+
+        if (price < 50) return false; // Filter saham penny / papan pemantauan khusus (FCA) di bawah Rp 50
         if (DEFENSIVE_BIG_CAPS.has(q.symbol)) return false; // Exclude BBCA, BBRI, BMRI, BBNI, TLKM, ASII, dll
-        if (!q.regularMarketVolume || q.regularMarketVolume < 50000) return false; // Filter saham tidur / mati
+        if (volume < 100000) return false; // Filter saham tidur / minim likuiditas
+        if (turnover < 500_000_000) return false; // Minimal transaksi Rp 500 Juta agar aman saat jual/take profit
+
+        // Anti-FOMO: Saham yang sudah naik > 7.5% diexclude karena sudah sangat rawan profit taking & dibanting bandar
+        if (changePercent > 7.5) return false;
+
         return true;
       });
 
-      // 3. Urutkan berdasarkan gabungan kenaikan harga + lonjakan volume untuk mengambil kandidat terpanas
+      // 3. Urutkan berdasarkan lonjakan volume (spike) + momentum awal yang terukur
       const topActive = activeSwings
         .sort((a: any, b: any) => {
           const volA = a.regularMarketVolume || 0;
@@ -147,11 +160,13 @@ export async function GET(request: Request) {
           const avgB = b.averageDailyVolume10Day || volB;
           const spikeA = avgA > 0 ? volA / avgA : 1;
           const spikeB = avgB > 0 ? volB / avgB : 1;
-          const scoreA = (a.regularMarketChangePercent || 0) * 2.5 + spikeA * 10;
-          const scoreB = (b.regularMarketChangePercent || 0) * 2.5 + spikeB * 10;
+          const sweetChangeA = Math.min(Math.max(a.regularMarketChangePercent || 0, -2), 6);
+          const sweetChangeB = Math.min(Math.max(b.regularMarketChangePercent || 0, -2), 6);
+          const scoreA = sweetChangeA * 3 + spikeA * 12;
+          const scoreB = sweetChangeB * 3 + spikeB * 12;
           return scoreB - scoreA;
         })
-        .slice(0, 45); // Ambil top 45 saham teraktif & terpanas di seluruh bursa IDX hari ini
+        .slice(0, 45); // Ambil top 45 saham teraktif & terpanas yang belum overheat
 
       targetTickers = topActive.map((q: any) => ({ ticker: q.symbol, quote: q }));
     } else {

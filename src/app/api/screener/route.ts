@@ -78,16 +78,26 @@ export async function GET(request: Request) {
     const allQuotes = await yahooFinance.quote(allSymbols).catch(() => []);
 
     if (mode === 'swing') {
-      // Filter: Hanya saham aktif transaksi (> 30.000 lembar), punya harga, Market Cap >= MIN_MARKET_CAP, dan EXCLUDE saham raksasa defensif
+      // Filter: Saham aktif transaksi, harga >= Rp 50, Market Cap >= MIN_MARKET_CAP, turnover >= 500 Juta, EXCLUDE raksasa defensif & Anti-FOMO (> +8.0%)
       const activeSwings = allQuotes.filter((q: any) => {
-        if (!q.regularMarketPrice || q.regularMarketPrice <= 0) return false;
+        const price = q.regularMarketPrice || 0;
+        const volume = q.regularMarketVolume || 0;
+        const turnover = price * volume;
+        const changePercent = q.regularMarketChangePercent || 0;
+
+        if (price < 50) return false; // Filter saham penny di bawah Rp 50
         if ((q.marketCap || 0) < MIN_MARKET_CAP) return false;
         if (DEFENSIVE_BIG_CAPS.has(q.symbol)) return false; // Exclude BBCA, BBRI, BMRI, BBNI, TLKM, ASII, dll
-        if (!q.regularMarketVolume || q.regularMarketVolume < 30000) return false;
+        if (volume < 50000) return false;
+        if (turnover < 500_000_000) return false;
+
+        // Anti-FOMO: Hindari saham yang sudah terbang tinggi (> 8.0%) karena sangat rawan dibanting bandar
+        if (changePercent > 8.0) return false;
+
         return true;
       });
 
-      // Urutkan berdasarkan momentum & likuiditas untuk mengambil kandidat teraktif (top 60)
+      // Urutkan berdasarkan lonjakan volume (spike) + momentum awal yang sehat
       const topActive = activeSwings
         .sort((a: any, b: any) => {
           const volA = a.regularMarketVolume || 0;
@@ -96,8 +106,10 @@ export async function GET(request: Request) {
           const avgB = b.averageDailyVolume10Day || volB;
           const spikeA = avgA > 0 ? volA / avgA : 1;
           const spikeB = avgB > 0 ? volB / avgB : 1;
-          const scoreA = (a.regularMarketChangePercent || 0) * 2.5 + spikeA * 10;
-          const scoreB = (b.regularMarketChangePercent || 0) * 2.5 + spikeB * 10;
+          const sweetChangeA = Math.min(Math.max(a.regularMarketChangePercent || 0, -2), 6);
+          const sweetChangeB = Math.min(Math.max(b.regularMarketChangePercent || 0, -2), 6);
+          const scoreA = sweetChangeA * 3 + spikeA * 10;
+          const scoreB = sweetChangeB * 3 + spikeB * 10;
           return scoreB - scoreA;
         })
         .slice(0, 60);

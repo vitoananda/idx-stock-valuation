@@ -49,22 +49,22 @@ export async function GET(
     let eps = quote.epsTrailingTwelveMonths || null;
     let bookValue = quote.bookValue || null;
 
-    // Normalisasi jika emiten mencatatkan BV/EPS dalam USD tapi harga saham dalam IDR
-    if (financialCurrency === 'USD') {
-      if (bookValue && bookValue < 10) {
+    // Normalisasi jika emiten mencatatkan BV/EPS dalam USD tapi harga saham dalam IDR (seperti ITMG, ADRO, MEDC, PTRO)
+    if (financialCurrency === 'USD' || (priceToBook && priceToBook > 100)) {
+      if (bookValue && bookValue < 50) {
         const bvpsIdr = bookValue * usdRate;
         priceToBook = currentPrice / bvpsIdr;
         bookValue = bvpsIdr;
       }
-      if (eps && eps < 5 && trailingPE && trailingPE > 1000) {
+      if (eps && eps < 10 && trailingPE && trailingPE > 500) {
         const epsIdr = eps * usdRate;
         trailingPE = currentPrice / epsIdr;
         eps = epsIdr;
       }
     }
 
-    if (priceToBook && priceToBook > 1000 && bookValue) {
-      const adjustedBV = bookValue * 16000;
+    if (priceToBook && priceToBook > 500 && bookValue && bookValue < 50) {
+      const adjustedBV = bookValue * (usdRate > 1 ? usdRate : 16000);
       priceToBook = currentPrice / adjustedBV;
       bookValue = adjustedBV;
     }
@@ -353,22 +353,40 @@ export async function GET(
     const pbvStd = pbvStats.std > 0 ? pbvStats.std : pbvMean * 0.25;
 
     // Dividend Yield & Rate
-    // Yahoo kadang mengembalikan trailingAnnualDividendYield dalam bentuk desimal (0.074) atau persen, atau bahkan null untuk IDX
+    // Yahoo kadang mengembalikan trailingAnnualDividendYield dalam bentuk desimal (0.074) atau rasio mikro jika currency mismatch (USD vs IDR)
     let divYieldPercent: number | null = null;
-    const rawYield = quote.trailingAnnualDividendYield ?? quote.dividendYield;
-    if (rawYield !== null && rawYield !== undefined && rawYield > 0) {
-      divYieldPercent = rawYield < 1 ? rawYield * 100 : rawYield;
-    } else if (quote.trailingAnnualDividendRate && currentPrice > 0) {
-      divYieldPercent = (quote.trailingAnnualDividendRate / currentPrice) * 100;
+    const trailingYield = quote.trailingAnnualDividendYield;
+    const directYield = quote.dividendYield;
+
+    if (trailingYield !== null && trailingYield !== undefined && trailingYield > 0.005) {
+      // Format desimal standar (contoh: 0.074 -> 7.4%)
+      divYieldPercent = trailingYield < 1 ? trailingYield * 100 : trailingYield;
+    } else if (directYield !== null && directYield !== undefined && directYield > 0) {
+      // Jika trailingAnnualDividendYield mikro atau 0, gunakan direct dividendYield (contoh: 6.93%)
+      divYieldPercent = directYield;
     } else if (dividendHistory && dividendHistory.length > 0 && currentPrice > 0) {
-      // Fallback: hitung yield dari dividen riil per lembar terakhir dibagi harga terkini
-      const latestAnnualDiv = dividendHistory[0].amount;
-      if (latestAnnualDiv > 0) {
-        divYieldPercent = (latestAnnualDiv / currentPrice) * 100;
+      // Fallback: hitung total dividen 12 bulan terakhir (TTM) dari riwayat riil
+      const oneYearAgo = new Date();
+      oneYearAgo.setFullYear(endDate.getFullYear() - 1);
+      const ttmPayments = dividendHistory.filter((d: any) => new Date(d.date) >= oneYearAgo);
+      const ttmDps = ttmPayments.length > 0
+        ? ttmPayments.reduce((acc: number, d: any) => acc + d.amount, 0)
+        : dividendHistory[0].amount;
+      if (ttmDps > 0) {
+        divYieldPercent = (ttmDps / currentPrice) * 100;
       }
     }
 
-    const dividendRate = quote.trailingAnnualDividendRate || (dividendHistory.length > 0 ? dividendHistory[0].amount : null);
+    // Hitung estimasi dividend rate tahunan (DPS dalam Rupiah per lembar)
+    let dividendRate: number | null = null;
+    if (quote.trailingAnnualDividendRate && quote.trailingAnnualDividendRate >= 1) {
+      dividendRate = quote.trailingAnnualDividendRate;
+    } else if (divYieldPercent && divYieldPercent > 0 && currentPrice > 0) {
+      // Hitung dari yield % x harga saham (contoh: 6.93% x 24.950 = Rp 1.729 per lembar)
+      dividendRate = Math.round((divYieldPercent / 100) * currentPrice);
+    } else if (dividendHistory && dividendHistory.length > 0) {
+      dividendRate = dividendHistory[0].amount;
+    }
 
     const cleanTicker = ticker.replace('.JK', '');
     const logoUrl = `https://assets.stockbit.com/logos/companies/${cleanTicker}.png`;
